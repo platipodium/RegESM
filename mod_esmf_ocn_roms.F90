@@ -32,11 +32,13 @@
       use NUOPC
       use NUOPC_Model, only :                                           &
           NUOPC_SetServices          => routine_SetServices,            &
+          NUOPC_RoutineRun           => routine_Run,                    &
           NUOPC_Label_Advance        => label_Advance,                  &
           NUOPC_Label_DataInitialize => label_DataInitialize,           &
           NUOPC_Model_Type_IS        => type_InternalState,             &
           NUOPC_Model_Label_IS       => label_InternalState,            &
           NUOPC_Label_SetClock       => label_SetClock,                 &
+          NUOPC_Label_SetRunClock    => label_SetRunClock,              &
           NUOPC_Label_CheckImport    => label_CheckImport
 !
       use mod_types
@@ -55,6 +57,15 @@
 !-----------------------------------------------------------------------
 !
       public :: OCN_SetServices
+!
+      type type_InternalStateStruct
+        type(ESMF_Clock) :: slowClock
+        type(ESMF_Clock) :: fastClock
+      end type
+!
+      type type_InternalState
+        type(type_InternalStateStruct), pointer :: wrap
+      end type
 !
       contains
 !
@@ -98,6 +109,67 @@
       if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
                              line=__LINE__, file=FILENAME)) return
 !
+      if (runSeq == Iimplicit) then
+!
+!-----------------------------------------------------------------------
+!     Run fast (phase 2)     
+!-----------------------------------------------------------------------
+!
+      call ESMF_GridCompSetEntryPoint(gcomp,                            &
+                                      methodflag=ESMF_METHOD_RUN,       &
+                                      userRoutine=NUOPC_RoutineRun,     &
+                                      phase=2,                          &
+                                      rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+                             line=__LINE__, file=FILENAME)) return
+!
+      call ESMF_MethodAdd(gcomp, label=NUOPC_Label_SetRunClock,         &
+                          userRoutine=OCN_SetRunClock_Fast,             &
+                          index=2, rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+                             line=__LINE__, file=FILENAME)) return
+!
+      call ESMF_MethodAdd(gcomp, label=NUOPC_Label_CheckImport,         &
+                          userRoutine=OCN_CheckImport_Fast,             &
+                          index=2, rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+                             line=__LINE__, file=FILENAME)) return
+!
+!-----------------------------------------------------------------------
+!     Run slow (phase 3)     
+!-----------------------------------------------------------------------
+!
+      call ESMF_GridCompSetEntryPoint(gcomp,                            &
+                                      methodflag=ESMF_METHOD_RUN,       &
+                                      userRoutine=NUOPC_RoutineRun,     &
+                                      phase=3,                          &
+                                      rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+                             line=__LINE__, file=FILENAME)) return
+!
+      call ESMF_MethodAdd(gcomp, label=NUOPC_Label_SetRunClock,         &
+                          userRoutine=OCN_SetRunClock_Slow,             &
+                          index=3, rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+                             line=__LINE__, file=FILENAME)) return
+!
+      call ESMF_MethodAdd(gcomp, label=NUOPC_Label_CheckImport,         &
+                          userRoutine=OCN_CheckImport_Slow,             &
+                          index=3,rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+                             line=__LINE__, file=FILENAME)) return
+      else
+!
+!-----------------------------------------------------------------------
+!     Generic check import     
+!-----------------------------------------------------------------------
+!
+      call ESMF_MethodAdd(gcomp, label=NUOPC_Label_CheckImport,         &
+                          userRoutine=OCN_CheckImport, index=1, rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+                             line=__LINE__, file=FILENAME)) return
+      end if
+!
 !-----------------------------------------------------------------------
 !     Attach phase independent specializing methods
 !     Setting the slow and fast model clocks 
@@ -110,11 +182,6 @@
 !
       call ESMF_MethodAdd(gcomp, label=NUOPC_Label_SetClock,            &
                           userRoutine=OCN_SetClock, rc=rc)
-      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
-                             line=__LINE__, file=FILENAME)) return
-!
-      call ESMF_MethodAdd(gcomp, label=NUOPC_Label_CheckImport,         &
-                          userRoutine=OCN_CheckImport, index=1, rc=rc)
       if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
                              line=__LINE__, file=FILENAME)) return
 !
@@ -154,7 +221,9 @@
 !     Local variable declarations 
 !-----------------------------------------------------------------------
 !
-      integer :: i
+      integer :: i, stat
+!
+      type(type_InternalState)  :: is_local
 !
       rc = ESMF_SUCCESS
 !
@@ -181,6 +250,23 @@
         if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,  &
                                line=__LINE__, file=FILENAME)) return
       end do
+!
+!-----------------------------------------------------------------------
+!     Allocate memory for the internal state and set it in the component
+!-----------------------------------------------------------------------
+!
+      if (runSeq == Iimplicit) then
+      allocate(is_local%wrap, stat=stat)  
+      if (ESMF_LogFoundAllocError(statusToCheck=stat,                   &
+                                  msg="Allocation of internal state "// &
+                                      "memory failed.",                 &
+                                  line=__LINE__, file=FILENAME,         &
+                                  rcToReturn=rc)) return
+!
+      call ESMF_GridCompSetInternalState(gcomp, is_local, rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+                             line=__LINE__, file=FILENAME)) return
+      end if
 !
       end subroutine OCN_SetInitializeP1
 !
@@ -314,6 +400,134 @@
 !
       end subroutine OCN_DataInit
 !
+      subroutine OCN_SetRunClock_Fast(gcomp, rc)
+      implicit none
+!
+!-----------------------------------------------------------------------
+!     Imported variable declarations 
+!-----------------------------------------------------------------------
+!
+      type(ESMF_GridComp) :: gcomp
+      integer, intent(out) :: rc
+!
+!-----------------------------------------------------------------------
+!     Local variable declarations 
+!-----------------------------------------------------------------------
+!
+      type(type_InternalState) :: is_local
+      type(NUOPC_Model_Type_IS) :: is
+      type(ESMF_Clock) :: clock
+      type(ESMF_Time) :: checkCurrTime, currTime, stopTime 
+      type(ESMF_TimeInterval) :: checkTimeStep, timeStep
+      type(ESMF_Direction_Flag) :: direction
+!
+      rc = ESMF_SUCCESS
+!
+!-----------------------------------------------------------------------
+!     Get component for its internal state 
+!-----------------------------------------------------------------------
+!
+      nullify(is_local%wrap)
+!
+      call ESMF_GridCompGetInternalState(gcomp, is_local, rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+          line=__LINE__, file=FILENAME)) return
+!
+!-----------------------------------------------------------------------
+!     Set fast clock to be the component clock
+!-----------------------------------------------------------------------
+!
+      call ESMF_GridCompSet(gcomp, clock=is_local%wrap%fastClock, rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+          line=__LINE__, file=FILENAME)) return
+!
+!-----------------------------------------------------------------------
+!     Query component for its internal state
+!-----------------------------------------------------------------------
+!
+      nullify(is%wrap)
+!
+      call ESMF_UserCompGetInternalState(gcomp, NUOPC_Model_Label_IS,   &
+                                         is, rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+          line=__LINE__, file=FILENAME)) return
+!
+!-----------------------------------------------------------------------
+!     Check and set the model clock against the driver clock
+!-----------------------------------------------------------------------
+!
+      call NUOPC_GridCompCheckSetClock(gcomp, is%wrap%driverClock,rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc,                              &
+                             msg="NUOPC INCOMPATIBILITY DETECTED: "//   &
+                                 "between model and driver clocks",     &
+          line=__LINE__, file=FILENAME)) return
+!            
+      end subroutine OCN_SetRunClock_Fast
+!
+      subroutine OCN_SetRunClock_Slow(gcomp, rc)
+      implicit none
+!
+!-----------------------------------------------------------------------
+!     Imported variable declarations 
+!-----------------------------------------------------------------------
+!
+      type(ESMF_GridComp) :: gcomp
+      integer, intent(out) :: rc
+!
+!-----------------------------------------------------------------------
+!     Local variable declarations 
+!-----------------------------------------------------------------------
+!
+      type(type_InternalState) :: is_local
+      type(NUOPC_Model_Type_IS) :: is
+      type(ESMF_Clock) :: clock
+      type(ESMF_Time) :: checkCurrTime, currTime, stopTime 
+      type(ESMF_TimeInterval) :: checkTimeStep, timeStep
+      type(ESMF_Direction_Flag) :: direction
+!
+      rc = ESMF_SUCCESS
+!
+!-----------------------------------------------------------------------
+!     Get component for its internal state 
+!-----------------------------------------------------------------------
+!
+      nullify(is_local%wrap)
+!
+      call ESMF_GridCompGetInternalState(gcomp, is_local, rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+          line=__LINE__, file=FILENAME)) return
+!
+!-----------------------------------------------------------------------
+!     Set fast clock to be the component clock
+!-----------------------------------------------------------------------
+!
+      call ESMF_GridCompSet(gcomp, clock=is_local%wrap%SlowClock, rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+          line=__LINE__, file=FILENAME)) return
+!
+!-----------------------------------------------------------------------
+!     Query component for its internal state
+!-----------------------------------------------------------------------
+!
+      nullify(is%wrap)
+!
+      call ESMF_UserCompGetInternalState(gcomp, NUOPC_Model_Label_IS,   &
+                                         is, rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+          line=__LINE__, file=FILENAME)) return
+!
+!-----------------------------------------------------------------------
+!     Check and set the model clock against the driver clock
+!-----------------------------------------------------------------------
+!
+      call NUOPC_GridCompCheckSetClock(gcomp, is%wrap%driverClock,rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc,                              &
+                             msg="NUOPC INCOMPATIBILITY DETECTED: "//   &
+                                 "between model and driver clocks",     &
+          line=__LINE__, file=FILENAME)) return
+!            
+      end subroutine OCN_SetRunClock_Slow
+!
       subroutine OCN_SetClock(gcomp, rc)
 !
 !-----------------------------------------------------------------------
@@ -347,14 +561,25 @@
       real*8 :: stime, etime, hour, minute, yday
       character (len=80) :: calendar
 !
+      type(type_InternalState) :: is_local
       type(ESMF_VM) :: vm
-      type(ESMF_Clock) :: cmpClock
+      type(ESMF_Clock) :: cmpClock, clock
       type(ESMF_TimeInterval) :: timeStep
       type(ESMF_Time) :: cmpRefTime, cmpStartTime, cmpStopTime
       type(ESMF_Time) :: startTime, currTime
       type(ESMF_Calendar) :: cal   
 !
       rc = ESMF_SUCCESS
+!
+!-----------------------------------------------------------------------
+!     Obtain internal state
+!-----------------------------------------------------------------------
+!
+       nullify(is_local%wrap)
+!
+      call ESMF_GridCompGetInternalState(gcomp, is_local, rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+                             line=__LINE__, file=FILENAME)) return
 !
 !-----------------------------------------------------------------------
 !     Get gridded component 
@@ -553,8 +778,52 @@
       end if
 !
 !-----------------------------------------------------------------------
-!     Modify component clock time step 
+!     Modify component clock and time step 
 !-----------------------------------------------------------------------
+!
+      if (runSeq == Iimplicit) then
+!
+!-----------------------------------------------------------------------
+!     Initialize internal clock
+!-----------------------------------------------------------------------
+!
+      is_local%wrap%slowClock = cmpClock
+!
+!-----------------------------------------------------------------------
+!     fastClock starts as a copy of the current component clock
+!-----------------------------------------------------------------------
+!
+      call NUOPC_GridCompSetClock(gcomp, cmpClock, rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+                             line=__LINE__, file=FILENAME)) return
+!
+!-----------------------------------------------------------------------
+!     Query the Component for its current clock
+!-----------------------------------------------------------------------
+!
+      call ESMF_GridCompGet(gcomp, clock=clock, rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+                             line=__LINE__, file=FILENAME)) return
+!
+!-----------------------------------------------------------------------
+!     fastClock is an alias to the current component clock
+!-----------------------------------------------------------------------
+!
+      is_local%wrap%fastClock = clock
+!
+!-----------------------------------------------------------------------
+!     Set the timeStep as 1/3 of the slow timeStep
+!-----------------------------------------------------------------------
+!
+      call ESMF_ClockGet(clock, timeStep=timeStep, rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+                             line=__LINE__, file=FILENAME)) return
+!
+      call ESMF_ClockSet(clock, timeStep=timeStep/3, rc=rc)   
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+                             line=__LINE__, file=FILENAME)) return
+!
+      else
 !
       fac1 = maxval(connectors(Iocean,:)%divDT,mask=models(:)%modActive)
       fac2 = maxval(connectors(:,Iocean)%divDT,mask=models(:)%modActive)
@@ -566,6 +835,7 @@
                          rc=rc)
       if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
                              line=__LINE__, file=FILENAME)) return
+      end if
 !
       end subroutine OCN_SetClock
 !
@@ -588,7 +858,7 @@
       character(ESMF_MAXSTR), allocatable :: itemNameList(:)
 !
       type(NUOPC_Model_Type_IS) :: is
-      type(ESMF_Time) :: startTime, currTime
+      type(ESMF_Time) :: startTime, stopTime, currTime
       type(ESMF_Clock) :: clock
       type(ESMF_Field) :: field
       type(ESMF_State) :: importState
@@ -599,23 +869,29 @@
 !     Get component for its internal state 
 !-----------------------------------------------------------------------
 !
-      nullify(is%wrap)
+!      nullify(is%wrap)
 !
-      call ESMF_UserCompGetInternalState(gcomp, NUOPC_Model_Label_IS,   &
-                                         is, rc)
-      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
-          line=__LINE__, file=FILENAME)) return
+!      call ESMF_UserCompGetInternalState(gcomp, NUOPC_Model_Label_IS,   &
+!                                         is, rc)
+!      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+!          line=__LINE__, file=FILENAME)) return
 !
 !-----------------------------------------------------------------------
 !     Get the start time and current time out of the clock
 !-----------------------------------------------------------------------
 !
-      call ESMF_ClockGet(is%wrap%driverClock, startTime=startTime,      &
-                         currTime=currTime, rc=rc)
+!      call ESMF_ClockGet(is%wrap%driverClock, startTime=startTime,      &
+!                         currTime=currTime, stopTime=stopTime, rc=rc)
+!      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+!          line=__LINE__, file=FILENAME)) return
+!
+      call ESMF_GridCompGet(gcomp, clock=clock,                         &
+                            importState=importState, rc=rc)
       if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
           line=__LINE__, file=FILENAME)) return
 !
-      call ESMF_GridCompGet(gcomp, importState=importState, rc=rc)
+      call ESMF_ClockGet(clock, startTime=startTime,                    &
+                         currTime=currTime, stopTime=stopTime, rc=rc)
       if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
           line=__LINE__, file=FILENAME)) return
 !
@@ -659,7 +935,20 @@
       if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
           line=__LINE__, file=FILENAME)) return
 !
-      atCorrectTime = NUOPC_FieldIsAtTime(field, currTime, rc=rc)
+!-----------------------------------------------------------------------
+!     Check that Fields in the importState show correct timestamp 
+!     if run sequence is explicit then check against current time
+!     if run sequence is semi-implicit then check against stop time
+!-----------------------------------------------------------------------
+!
+      if (runSeq == Iexplicit) then
+        atCorrectTime = NUOPC_FieldIsAtTime(field, currTime, rc=rc)
+      else if (runSeq == Isimplicit) then
+        atCorrectTime = NUOPC_FieldIsAtTime(field, stopTime, rc=rc)
+      else if (runSeq == Iimplicit) then
+        print*, "not implemented yet"
+      end if 
+!
       if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
           line=__LINE__, file=FILENAME)) return
 !
@@ -700,6 +989,122 @@
       end if
 !
       end subroutine OCN_CheckImport
+!
+      subroutine OCN_CheckImport_Fast(gcomp, rc)
+      implicit none
+!
+!-----------------------------------------------------------------------
+!     Imported variable declarations 
+!-----------------------------------------------------------------------
+!
+      type(ESMF_GridComp) :: gcomp
+      integer, intent(out) :: rc
+!
+!-----------------------------------------------------------------------
+!     Local variable declarations 
+!-----------------------------------------------------------------------
+!
+      logical :: allCorrectTime
+!
+      type(ESMF_Time) :: time
+      type(ESMF_TimeInterval) :: timeStep
+      type(ESMF_Clock) :: clock
+      type(ESMF_State) :: importState
+!
+!-----------------------------------------------------------------------
+!     Query the Component for its clock and importState
+!-----------------------------------------------------------------------
+!
+      call ESMF_GridCompGet(gcomp, clock=clock,                         &
+                            importState=importState, rc=rc)  
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+                             line=__LINE__, file=FILENAME)) return
+!
+!-----------------------------------------------------------------------
+!     Get the current time out of the clock
+!-----------------------------------------------------------------------
+!
+      call ESMF_ClockGet(clock, currTime=time, timeStep=timeStep, rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+                             line=__LINE__, file=FILENAME)) return
+!
+!-----------------------------------------------------------------------
+!     Check that Fields in the importState show correct timestamp
+!-----------------------------------------------------------------------
+!
+      allCorrectTime = NUOPC_StateIsAtTime(importState,                 &
+                                           time+timeStep/2, rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+                             line=__LINE__, file=FILENAME)) return
+!
+      if (.not. allCorrectTime) then
+      call ESMF_LogSetError(ESMF_RC_ARG_BAD,                            &
+                            msg="NUOPC INCOMPATIBILITY DETECTED: "//    &
+                            "Import Fields not at correct time",        &
+                            line=__LINE__, file=FILENAME,               &
+                            rcToReturn=rc)
+      return
+      end if   
+!
+      end subroutine OCN_CheckImport_Fast
+!
+      subroutine OCN_CheckImport_Slow(gcomp, rc)
+      implicit none
+!
+!-----------------------------------------------------------------------
+!     Imported variable declarations 
+!-----------------------------------------------------------------------
+!
+      type(ESMF_GridComp) :: gcomp
+      integer, intent(out) :: rc
+!
+!-----------------------------------------------------------------------
+!     Local variable declarations 
+!-----------------------------------------------------------------------
+!
+      logical :: allCorrectTime
+!
+      type(ESMF_Time) :: time
+      type(ESMF_TimeInterval) :: timeStep
+      type(ESMF_Clock) :: clock
+      type(ESMF_State) :: importState
+!
+!-----------------------------------------------------------------------
+!     Query the Component for its clock and importState
+!-----------------------------------------------------------------------
+!
+      call ESMF_GridCompGet(gcomp, clock=clock,                         &
+                            importState=importState, rc=rc)  
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+                             line=__LINE__, file=FILENAME)) return
+!
+!-----------------------------------------------------------------------
+!     Get the current time out of the clock
+!-----------------------------------------------------------------------
+!
+      call ESMF_ClockGet(clock, currTime=time, timeStep=timeStep, rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+                             line=__LINE__, file=FILENAME)) return
+!
+!-----------------------------------------------------------------------
+!     Check that Fields in the importState show correct timestamp
+!-----------------------------------------------------------------------
+!
+      allCorrectTime = NUOPC_StateIsAtTime(importState,                 &
+                                           time+timeStep, rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+                             line=__LINE__, file=FILENAME)) return
+!
+      if (.not. allCorrectTime) then
+      call ESMF_LogSetError(ESMF_RC_ARG_BAD,                            &
+                            msg="NUOPC INCOMPATIBILITY DETECTED: "//    &
+                            "Import Fields not at correct time",        &
+                            line=__LINE__, file=FILENAME,               &
+                            rcToReturn=rc)
+      return
+      end if   
+!
+      end subroutine OCN_CheckImport_Slow
 !
       subroutine OCN_SetGridArrays(gcomp, localPet, rc)
 !

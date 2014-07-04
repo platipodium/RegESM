@@ -365,36 +365,209 @@
       if (models(Iatmos)%modActive .and.                                &
           models(Iocean)%modActive .and. .not.                          &
           models(Iriver)%modActive) then
-        call NUOPC_RunSequenceAdd(genIS%wrap%runSeq, 1, rc=rc)
-        if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,  &
-            line=__LINE__, file=FILENAME)) return
 !
-        do i = 1, nModels
-          do j = 1, nModels
-            if (connectors(i,j)%modActive) then      
-              call NUOPC_RunElementAdd(genIS%wrap%runSeq(1),            &
-                                       i=i, j=j, phase=1, rc=rc)
-              if (ESMF_LogFoundError(rcToCheck=rc,                      &
-                                     msg=ESMF_LOGERR_PASSTHRU,          &
-                                     line=__LINE__,                     &
-                                     file=FILENAME)) return
-            end if
-          end do
-        end do
+      if (runSeq == Iexplicit) then 
 !
-        do i = 1, nModels
-          if (models(i)%modActive) then
-            call NUOPC_RunElementAdd(genIS%wrap%runSeq(1),              &
-                                     i=i, j=-1, phase=1, rc=rc)
-            if (ESMF_LogFoundError(rcToCheck=rc,                        &
-                                   msg=ESMF_LOGERR_PASSTHRU,&
-                                   line=__LINE__, file=FILENAME)) return
-          end if
-        end do
+!-----------------------------------------------------------------------
+!     add a single run sequence element
+!-----------------------------------------------------------------------
 !
-        call NUOPC_RunSequencePrint(genIS%wrap%runSeq(1), rc=rc)
-        if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,  &
-            line=__LINE__, file=FILENAME)) return
+      call NUOPC_RunSequenceAdd(genIS%wrap%runSeq, 1, rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+          line=__LINE__, file=FILENAME)) return
+!
+!-----------------------------------------------------------------------
+!     add connectors (atm2ocn, ocn2atm) in runSeq(1) 
+!-----------------------------------------------------------------------
+!
+      do i = 1, nModels
+      do j = 1, nModels
+      if (connectors(i,j)%modActive) then      
+      call NUOPC_RunElementAdd(genIS%wrap%runSeq(1),                    &
+                               i=i, j=j, phase=1, rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+          line=__LINE__, file=FILENAME)) return
+      end if
+      end do
+      end do
+!
+!-----------------------------------------------------------------------
+!     add model components (atm, ocn) in runSeq(1) 
+!-----------------------------------------------------------------------
+!
+      do i = 1, nModels
+      if (models(i)%modActive) then
+      call NUOPC_RunElementAdd(genIS%wrap%runSeq(1),                    &
+                               i=i, j=-1, phase=1, rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+          line=__LINE__, file=FILENAME)) return
+      end if
+      end do
+!
+      else if (runSeq == Isimplicit) then
+!
+!-----------------------------------------------------------------------
+!     add a single run sequence element
+!-----------------------------------------------------------------------
+!
+      call NUOPC_RunSequenceAdd(genIS%wrap%runSeq, 1, rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+          line=__LINE__, file=FILENAME)) return        
+!
+!-----------------------------------------------------------------------
+!     ocn2atm in runSeq(1)
+!-----------------------------------------------------------------------
+!
+      call NUOPC_RunElementAdd(genIS%wrap%runSeq(1),                    &
+                               i=Iocean, j=Iatmos, phase=1, rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+          line=__LINE__, file=FILENAME)) return
+!
+!-----------------------------------------------------------------------
+!     atm in runSeq(1)
+!-----------------------------------------------------------------------
+!        
+      call NUOPC_RunElementAdd(genIS%wrap%runSeq(1),                    &
+                               i=Iatmos, j=-1, phase=1, rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+          line=__LINE__, file=FILENAME)) return
+!
+!-----------------------------------------------------------------------
+!     atm2ocn in runSeq(1)
+!-----------------------------------------------------------------------
+!
+      call NUOPC_RunElementAdd(genIS%wrap%runSeq(1),                    &
+                               i=Iatmos, j=Iocean, phase=1, rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+          line=__LINE__, file=FILENAME)) return
+!
+!-----------------------------------------------------------------------
+!     ocn in runSeq(1)
+!-----------------------------------------------------------------------
+!        
+      call NUOPC_RunElementAdd(genIS%wrap%runSeq(1),                    &
+                               i=Iocean, j=-1, phase=1, rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+          line=__LINE__, file=FILENAME)) return
+!
+      else if (runSeq == Iimplicit) then
+!
+!-----------------------------------------------------------------------
+!     add two run sequence elements 
+!-----------------------------------------------------------------------
+!
+      call NUOPC_RunSequenceAdd(genIS%wrap%runSeq, 2, rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+          line=__LINE__, file=FILENAME)) return
+!
+!-----------------------------------------------------------------------
+!     ocn2atm in runSeq(1)
+!-----------------------------------------------------------------------
+!
+      call NUOPC_RunElementAdd(genIS%wrap%runSeq(1),                    &
+                               i=Iocean, j=Iatmos, phase=1, rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+          line=__LINE__, file=FILENAME)) return
+!
+!-----------------------------------------------------------------------
+!     link to runSeq(2) in runSeq(1)
+!-----------------------------------------------------------------------
+!
+      call NUOPC_RunElementAdd(genIS%wrap%runSeq(1),                    &
+                               i=-2, j=0, phase=1, rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+          line=__LINE__, file=FILENAME)) return
+!
+!-----------------------------------------------------------------------
+!     create clock for fast time step 
+!-----------------------------------------------------------------------
+!
+      if (restarted) then
+      iclock = ESMF_ClockCreate(timeStep=esmTimeStep/3,                 &
+                                startTime=esmRestartTime,               &
+                                stopTime=esmStopTime,                   &
+                                name=trim(cname), rc=rc)
+      else
+      iclock = ESMF_ClockCreate(timeStep=esmTimeStep/3,                 &
+                                startTime=esmStartTime,                 &
+                                stopTime=esmStopTime,                   &
+                                name=trim(cname), rc=rc)
+      end if 
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+          line=__LINE__, file=FILENAME)) return
+!
+!-----------------------------------------------------------------------
+!     install clock in fast loop RunSequence object
+!-----------------------------------------------------------------------
+!
+      call NUOPC_RunSequenceSet(genIS%wrap%runSeq(2), iclock, rc=rc) 
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+          line=__LINE__, file=FILENAME)) return
+!
+!-----------------------------------------------------------------------
+!     atm down sweep in runSeq(2) 
+!-----------------------------------------------------------------------
+!
+      call NUOPC_RunElementAdd(genIS%wrap%runSeq(2),                    &
+                               i=Iatmos, j=-1, phase=2, rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+          line=__LINE__, file=FILENAME)) return
+!
+!-----------------------------------------------------------------------
+!     atm2ocn in runSeq(2) 
+!-----------------------------------------------------------------------
+!
+      call NUOPC_RunElementAdd(genIS%wrap%runSeq(2),                    &
+                               i=Iatmos, j=Iocean, phase=1, rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+          line=__LINE__, file=FILENAME)) return
+!
+!-----------------------------------------------------------------------
+!     ocn fast processes in runSeq(2) 
+!-----------------------------------------------------------------------
+!
+      call NUOPC_RunElementAdd(genIS%wrap%runSeq(2),                    &
+                               i=Iocean, j=-1, phase=2, rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+          line=__LINE__, file=FILENAME)) return
+!
+!-----------------------------------------------------------------------
+!     ocn2atm in runSeq(2) 
+!-----------------------------------------------------------------------
+!
+      call NUOPC_RunElementAdd(genIS%wrap%runSeq(2),                    &
+                               i=Iocean, j=Iatmos, phase=1, rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+          line=__LINE__, file=FILENAME)) return
+!
+!-----------------------------------------------------------------------
+!     atm up sweep in runSeq(2) 
+!-----------------------------------------------------------------------
+!
+      call NUOPC_RunElementAdd(genIS%wrap%runSeq(2),                    &
+                               i=Iatmos, j=-1, phase=3, rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+          line=__LINE__, file=FILENAME)) return
+!
+!-----------------------------------------------------------------------
+!     atm2ocn in runSeq(1) 
+!-----------------------------------------------------------------------
+!
+      call NUOPC_RunElementAdd(genIS%wrap%runSeq(1),                    &
+                               i=Iatmos, j=Iocean, phase=1, rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+          line=__LINE__, file=FILENAME)) return
+!
+!-----------------------------------------------------------------------
+!     ocn slow processes in runSeq(1) 
+!-----------------------------------------------------------------------
+!
+      call NUOPC_RunElementAdd(genIS%wrap%runSeq(1),                    &
+                               i=Iocean, j=-1, phase=3, rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+          line=__LINE__, file=FILENAME)) return
+!
+      end if
 !  
 !-----------------------------------------------------------------------
 !     ATM, OCN and RTM model components are activated
@@ -470,16 +643,16 @@
                              i=Iocean, j=-1, phase=1, rc=rc)
         if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,  &
             line=__LINE__, file=FILENAME)) return
-!
-        call NUOPC_RunSequencePrint(genIS%wrap%runSeq, rc=rc)
-        if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,  &
-            line=__LINE__, file=FILENAME)) return
       else
         call ESMF_LogSetError(ESMF_FAILURE, rcToReturn=rc,              &
              msg='Unknown coupling setup: please activate one of the '//&
              'following options -> ATM-OCN or ATM-OCN-RTM')
         return
       end if
+!
+      call NUOPC_RunSequencePrint(genIS%wrap%runSeq, rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+            line=__LINE__, file=FILENAME)) return
 !
       end subroutine ESM_SetModelServices
 !

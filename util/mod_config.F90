@@ -104,6 +104,25 @@
       end if
 !
 !-----------------------------------------------------------------------
+!     Get run sequence (explicit, semi-implicit or implicit)
+!-----------------------------------------------------------------------
+!
+      call ESMF_ConfigFindLabel(cf, 'RunSequence:', rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+          line=__LINE__, file=FILENAME)) return      
+!
+      call ESMF_ConfigGetAttribute(cf, runSequence, rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+          line=__LINE__, file=FILENAME)) return
+!
+      runSeq = Iexplicit
+      if (trim(runSequence) == 'semi-implicit') runSeq = Isimplicit
+      if (trim(runSequence) == 'implicit') runSeq = Iimplicit
+      if (localPet == 0) then
+        write(*, fmt='(A14,A)') "Run Sequence: ", trim(RUNNSEQ(runSeq))
+      end if
+!
+!-----------------------------------------------------------------------
 !     Get number of component (or model) 
 !-----------------------------------------------------------------------
 !        

@@ -180,6 +180,17 @@
       integer, parameter :: Ipar = 2
 !
 !-----------------------------------------------------------------------
+!     Running sequence      
+!-----------------------------------------------------------------------
+!
+      character(len=13) :: RUNNSEQ(3) = (/ 'EXPLICIT     ',             &
+                                           'SEMI-IMPLICIT',             &
+                                           'IMPLICIT' /)
+      integer, parameter :: Iexplicit = 1
+      integer, parameter :: Isimplicit = 2
+      integer, parameter :: Iimplicit = 3
+!
+!-----------------------------------------------------------------------
 !     ESM connector (coupler) holder
 !-----------------------------------------------------------------------
 !
@@ -191,6 +202,7 @@
 !
       character(ESMF_MAXSTR) :: config_fname="namelist.rc"
       character(ESMF_MAXSTR) :: petLayoutOption
+      character(ESMF_MAXSTR) :: runSequence 
       type(ESMF_Time) :: esmStartTime
       type(ESMF_Time) :: esmRestartTime
       type(ESMF_Time) :: esmStopTime
@@ -199,6 +211,7 @@
       type(ESMF_Clock) :: esmClock
 !
       integer :: runMod
+      integer :: runSeq
       integer :: debugLevel
       logical :: restarted
 !

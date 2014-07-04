@@ -16,6 +16,19 @@
 PETLayoutOption: sequential 
 #
 #-----------------------------------------------------------------------
+#     The coupled model supports different run sequences or coupling 
+#     schemes. In this case following options are supported:
+#     'explicit'      : all connections start and end at the same time
+#     'semi-implicit' : a leap-frog style interaction between ATM and OCN
+#     'implicit'      : more sophisticated version of coupling
+#
+#     More information can be found in following link:
+#     https://earthsystemcog.org/projects/nuopc/advanced
+#-----------------------------------------------------------------------
+#
+RunSequence: explicit
+#
+#-----------------------------------------------------------------------
 #     PET distribution of model components (ordered in ATM, OCN, RTM)
 #     when 'concurrent' mode activated. i.e. 36 24 0
 #
