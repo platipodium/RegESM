@@ -1,19 +1,20 @@
 !-----------------------------------------------------------------------
 !
-!     This file is part of ICTP RegESM.
+!     This file is part of Istanbul Technical University, ITU RegESM.
 !
-!     ICTP RegESM is free software: you can redistribute it and/or modify
-!     it under the terms of the GNU General Public License as published by
-!     the Free Software Foundation, either version 3 of the License, or
-!     (at your option) any later version.
+!     ITU RegESM is free software: you can redistribute it and/or modify
+!     it under the terms of the GNU General Public License as published
+!     by the Free Software Foundation, either version 3 of the License,
+!     or (at your option) any later version.
 !
-!     ICTP RegESM is distributed in the hope that it will be useful,
+!     ITU RegESM is distributed in the hope that it will be useful,
 !     but WITHOUT ANY WARRANTY; without even the implied warranty of
 !     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 !     GNU General Public License for more details.
 !
 !     You should have received a copy of the GNU General Public License
-!     along with ICTP RegESM.  If not, see <http://www.gnu.org/licenses/>.
+!     along with ITU RegESM.  If not, see
+!     <http://www.gnu.org/licenses/>.
 !
 !-----------------------------------------------------------------------
 #define FILENAME "mod_esmf_esm.F90"
@@ -347,9 +348,21 @@
           line=__LINE__, file=FILENAME)) return
 !  
 !-----------------------------------------------------------------------
-!     Change default run sequence. Currently, two options are supported:
-!     - single runSeq for ATM-OCN coupling
-!     - multiple (2) runSeq for ATM-OCN-RTM coupling
+!     Change default run sequence
+!
+!     ATM-OCN coupling:
+!     - supports explicit, semi-implict and implicit
+!     - implicit:
+!       + ATM: two run phase version, splitting the direct solver of
+!         implicit problem: phase 2: down sweep / phase 3: up sweep
+!         Both down and up sweep phases are executing within the same
+!         (fast) timelevel. They are implemented as half timeSteps.
+!       + OCN: two run phase version, splitting slow and fast processes:
+!         phase 2: slow processes / phase 3: fast processes. The two
+!         phases are operating on different time scales (two seperate
+!         clock)
+!
+!     ATM-OCN-RTM coupling:
 !       + fast processes (ATM-OCN and OCN-ATM coupling) i.e. 3-hr
 !       + slow processes (ATM-RTM and RTM-OCN coupling) i.e. 1-day
 !-----------------------------------------------------------------------
