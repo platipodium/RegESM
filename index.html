@@ -1,58 +1,73 @@
-<!doctype html>
+<!DOCTYPE html>
 <html>
   <head>
-    <meta charset="utf-8">
+    <meta charset='utf-8'>
     <meta http-equiv="X-UA-Compatible" content="chrome=1">
+
+    <link rel="stylesheet" type="text/css" href="stylesheets/stylesheet.css" media="screen">
+    <link rel="stylesheet" type="text/css" href="stylesheets/github-dark.css" media="screen">
+    <link rel="stylesheet" type="text/css" href="stylesheets/print.css" media="print">
+
     <title>RegESM by uturuncoglu</title>
-
-    <link rel="stylesheet" href="stylesheets/styles.css">
-    <link rel="stylesheet" href="stylesheets/pygment_trac.css">
-    <script src="javascripts/scale.fix.js"></script>
-    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
-
-    <!--[if lt IE 9]>
-    <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
-    <![endif]-->
   </head>
-  <body>
-    <div class="wrapper">
-      <header>
-        <h1>RegESM</h1>
-        <p>Regional Earth System Model (RegESM)</p>
-        <p class="view"><a href="https://github.com/uturuncoglu/RegESM">View the Project on GitHub <small>uturuncoglu/RegESM</small></a></p>
-        <ul>
-          <li><a href="https://github.com/uturuncoglu/RegESM/zipball/master">Download <strong>ZIP File</strong></a></li>
-          <li><a href="https://github.com/uturuncoglu/RegESM/tarball/master">Download <strong>TAR Ball</strong></a></li>
-          <li><a href="https://github.com/uturuncoglu/RegESM">View On <strong>GitHub</strong></a></li>
-        </ul>
-      </header>
-      <section>
-        <h1>RegESM - <strong>Reg</strong>ional <strong>E</strong>arth <strong>S</strong>ystem <strong>M</strong>odel</h1>
 
-<h2>Components</h2>
+  <body>
+
+    <header>
+      <div class="container">
+        <h1>RegESM</h1>
+        <h2>Regional Earth System Model (RegESM)</h2>
+
+        <section id="downloads">
+          <a href="https://github.com/uturuncoglu/RegESM/zipball/master" class="btn">Download as .zip</a>
+          <a href="https://github.com/uturuncoglu/RegESM/tarball/master" class="btn">Download as .tar.gz</a>
+          <a href="https://github.com/uturuncoglu/RegESM" class="btn btn-github"><span class="icon"></span>View on GitHub</a>
+        </section>
+      </div>
+    </header>
+
+    <div class="container">
+      <section id="main_content">
+        <h1>
+<a id="regesm---regional-earth-system-model" class="anchor" href="#regesm---regional-earth-system-model" aria-hidden="true"><span class="octicon octicon-link"></span></a>RegESM - <strong>Reg</strong>ional <strong>E</strong>arth <strong>S</strong>ystem <strong>M</strong>odel</h1>
+
+<h2>
+<a id="components" class="anchor" href="#components" aria-hidden="true"><span class="octicon octicon-link"></span></a>Components</h2>
 
 <ul>
-<li>ATM: <a href="http://gforge.ictp.it/gf/project/regcm/">RegCM</a> (regcm-core)</li>
+<li>ATM: <a href="http://gforge.ictp.it/gf/project/regcm/">RegCM</a> (4.3.5.6)</li>
 <li>OCN: <a href="http://www.myroms.org">ROMS</a> (3.5)</li>
-<li>OCN: <a href="http://mitgcm.org/download/">MIT-gcm</a> (MITgcm_c63s)</li>
 <li>RTM: <a href="http://www.mpimet.mpg.de/en/science/the-land-in-the-earth-system/terrestrial-hydrology/hd-model.html">HD</a> (1.0.2) for license go <a href="http://www.mpimet.mpg.de/en/science/models/model-distribution.html">here</a>
 </li>
-</ul><h2>Prerequisites</h2>
+</ul>
+
+<h2>
+<a id="prerequisites" class="anchor" href="#prerequisites" aria-hidden="true"><span class="octicon octicon-link"></span></a>Prerequisites</h2>
 
 <ul>
 <li>RegESM itself</li>
-<li>Earth System Modeling Framework (<a href="http://www.earthsystemmodeling.org">ESMF</a>, &gt;= 6.2.0) Library</li>
+<li>Earth System Modeling Framework (<a href="http://www.earthsystemmodeling.org">ESMF</a>, &gt;= 6.2.0 beta 15) Library</li>
 <li>Model Components (patched and installed with coupling support)</li>
-</ul><h2>Design</h2>
+</ul>
 
-<p><img src="http://www.be.itu.edu.tr/%7Eu.utku.turuncoglu/regesm.gif" alt="Components of the RegESM"><img src="http://www.be.itu.edu.tr/%7Eu.utku.turuncoglu/runSeq.gif" alt="Run sequence of the components - fast vs. slow processes"></p>
+<h2>
+<a id="design" class="anchor" href="#design" aria-hidden="true"><span class="octicon octicon-link"></span></a>Design</h2>
+
+<p><img src="http://www.be.itu.edu.tr/%7Eu.utku.turuncoglu/regesm.gif" alt="Components of the RegESM">
+<img src="http://www.be.itu.edu.tr/%7Eu.utku.turuncoglu/runSeq.gif" alt="Run sequence of the components - fast vs. slow processes"></p>
       </section>
     </div>
-    <footer>
-      <p>Project maintained by <a href="https://github.com/uturuncoglu">uturuncoglu</a></p>
-      <p>Hosted on GitHub Pages &mdash; Theme by <a href="https://github.com/orderedlist">orderedlist</a></p>
-    </footer>
-    <!--[if !IE]><script>fixScale(document);</script><![endif]-->
-    
+
+              <script type="text/javascript">
+            var gaJsHost = (("https:" == document.location.protocol) ? "https://ssl." : "http://www.");
+            document.write(unescape("%3Cscript src='" + gaJsHost + "google-analytics.com/ga.js' type='text/javascript'%3E%3C/script%3E"));
+          </script>
+          <script type="text/javascript">
+            try {
+              var pageTracker = _gat._getTracker("UA-36049219-2");
+            pageTracker._trackPageview();
+            } catch(err) {}
+          </script>
+
   </body>
 </html>
