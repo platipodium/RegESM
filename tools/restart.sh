@@ -9,9 +9,10 @@
 #   ATM - 0 (None), 1 (RegCM)                               #
 #   OCN - 0 (None), 1 (ROMS), 2 (MITgcm)                    #
 #   RTM - 0 (None), 1 (HD)                                  #
+#   WAV - 0 (None), 1 (WAM)                                 #
 # - Set model parameter and stdout files                    #
-#   ATM_PARAM - RegCM configuration file                    #
-#   ATM_STOUT - RegCM stdout file, if it exists             #
+#   *_PARAM - configuration file                            #
+#   *_STOUT - stdout file, if it exists                     #
 #############################################################
 
 MPATH="/etc/profile.d"
@@ -26,6 +27,8 @@ OCN_PARAM="data"
 OCN_PARAM_ADD="data.cal"
 RTM=0
 RTM_PARAM="hdini.inp"
+WAV=1
+WAV_PARAM="WAM_User"
 
 #############################################################
 # Load modules                                              #
@@ -147,7 +150,7 @@ if [ "$OCN" -eq "1" ]; then
   cp $OCN_PARAM ${OCN_PARAM/.in/}_$dstamp.in
 
   # get name of ROMS restart file
-  ocnrst=`cat cas.in | grep "RSTNAME ==" | awk '{print $3}'`
+  ocnrst=`cat ${OCN_PARAM} | grep "RSTNAME ==" | awk '{print $3}'`
 
   # get list of dates from the ROMS restart file
   cdo -s showdate $ocnrst | tr " " "\n" | grep - >&.tmp
@@ -259,18 +262,6 @@ if [ "$OCN" -eq "2" ]; then
   dt=${dt/.0/}
   echo "[debug] -- MITgcm : deltaT = $dt"
 
-  # get dump frequency (in sec)
-  dfreq=`cat $OCN_PARAM | grep -v "\#" | grep "pChkptFreq[^a-zA-Z0-9]"`
-  dfreq=`echo $dfreq | awk -F\= '{print $2}'`
-  dfreq=${dfreq/.,/}
-  dfreq=${dfreq/,/}
-  dfreq=${dfreq/.0/}
-  echo "[debug] -- MITgcm : dumpFreq = $dfreq"
-
-  # find time step 
-  dstep=$((dfreq/dt))
-  echo "[debug] -- MITgcm : Time Step = $dstep"
-
   # get start time
   sdate=`cat $OCN_PARAM_ADD | grep -v "\#" | grep "startDate_1[^a-zA-Z0-9]"`
   sdate=`echo $sdate | awk -F\= '{print $2}'` 
@@ -281,12 +272,12 @@ if [ "$OCN" -eq "2" ]; then
 
   # get time diference
   diff=$(dateDiff -d "$sdate2" "$dstr")
-  echo "[debug] -- MITgcm : Pickup File = '`find . -name "pickup.*$((diff*dstep)).data"`'"
+  echo "[debug] -- MITgcm : Pickup File = '`find . -name "pickup.*$((diff*86400/dt)).data"`'"
 
   # estimate restart time
   str1=`cat $OCN_PARAM | grep -v "\#" | grep "startTime[^a-zA-Z0-9]"`
   val1=`echo $str1 | awk -F\= '{print $2}'`
-  val2=$((diff*dstep*dt))
+  val2=$((diff*86400))
   str2=${str1/$val1/$val2,}
   echo "[debug] -- MITgcm : startTime = $val1"
   cp $OCN_PARAM ${OCN_PARAM}_$dstamp
@@ -313,17 +304,55 @@ if [ "$RTM" -eq "1" ];then
 
   # find time indices to split data
   lno=`awk -v dstr=$dstr '{if($1==dstr) print NR}' .tmp`
+  if [ -z "$lno" ]; then
+    lno=`cat -n .tmp | tail -n 1 | awk '{print $1}'`
+  fi
+  echo "[debug] -- RTM component restart time index = $lno"
 
   # get data from restart file 
-  if [ $((lno-1)) -eq "0" ]; then
-    echo "[debug] -- $dstr is not in RTM restart file!"
-  else
-    ncks -O -d time,$((lno-2)),$((lno-2)) ${hdrst} ${hdini}
-  fi
+  ncks -O -d time,$((lno-1)),$((lno-1)) ${hdrst} ${hdini}
 
   # backup files
   mv ${hdrst} ${hdrst/.nc/}_$dstamp.nc  
   mv ${hdout} ${hdout/.nc/}_$dstamp.nc  
 else
   echo "[debug] -- Skip RTM component! It is not active ..."
+fi
+
+#############################################################
+# WAM                                                       #
+#############################################################
+
+if [ "$WAV" -eq "1" ];then
+  # backup parameter files
+  cp $WAV_PARAM ${WAV_PARAM}_$dstamp.in
+
+  # get atm component stop time
+  endd=`cat regcm.in_MED50km | grep mdate2 | awk -F= '{print $2}' | awk -F, '{print $1}'`
+
+  # modify parameters
+  # start time
+  val1=`cat WAM_User | grep $endd | awk '{print $1}'`
+  val2="${dstr//-/}000000"
+  if [ "$val1" == "$val2" ]; then
+    echo "[debug] -- start date is already changed. do not change it again!"
+  else
+    cat $WAV_PARAM | sed "s/$val1/$val2/g" > .tmp
+    mv .tmp $WAV_PARAM
+    echo "[debug] -- start date is changed to '$val2' in '$WAV_PARAM' file."
+  fi
+
+  # restart flag
+  lno=`cat WAM_User | grep -n "C COLDSTART" | awk -F: '{print $1}'`
+  val1=`cat WAM_User | head -n $((lno+2)) | tail -n 1`
+  val2="          F"
+  if [ "$val1" == "$val2" ]; then
+    echo "[debug] -- restart flag is already changed. do not change it again!"
+  else  
+    cat WAM_User | sed -e "$((lno+2))s/$val1/$val2/" > .tmp
+    mv .tmp $WAV_PARAM
+    echo "[debug] -- restart flag is changed to '$val2' in '$WAV_PARAM' file."
+  fi
+else
+  echo "[debug] -- Skip WAV component! It is not active ..."
 fi

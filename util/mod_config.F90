@@ -1,21 +1,8 @@
-!-----------------------------------------------------------------------
-!
-!     This file is part of ITU RegESM.
-!
-!     ITU RegESM is free software: you can redistribute it and/or modify
-!     it under the terms of the GNU General Public License as published by
-!     the Free Software Foundation, either version 3 of the License, or
-!     (at your option) any later version.
-!
-!     ITU RegESM is distributed in the hope that it will be useful,
-!     but WITHOUT ANY WARRANTY; without even the implied warranty of
-!     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See thec
-!     GNU General Public License for more details.
-!
-!     You should have received a copy of the GNU General Public License
-!     along with ITU RegESM.  If not, see <http://www.gnu.org/licenses/>.
-!
-!-----------------------------------------------------------------------
+!=======================================================================
+! Regional Earth System Model (RegESM)
+! Copyright (c) 2013-2017 Ufuk Turuncoglu
+! Licensed under the MIT License.
+!=======================================================================
 #define FILENAME "util/mod_config.F90" 
 !
 !-----------------------------------------------------------------------
@@ -32,6 +19,7 @@
       use NUOPC
 !
       use mod_types
+      use mod_shared
 !
       implicit none
       contains
@@ -105,6 +93,30 @@
       end if
 !
 !-----------------------------------------------------------------------
+!     Get coupling type 
+!-----------------------------------------------------------------------
+!        
+      cplType = 1
+! 
+      call ESMF_ConfigGetAttribute(cf, cplType,                         &
+                                     label='CouplingType:', rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+          line=__LINE__, file=FILENAME)) return
+!
+      if (localPet == 0) then
+        if (cplType == 1) then
+          write(*, fmt='(A)') "Coupling Type: EXPLICIT"
+        else if (cplType == 2) then
+          write(*, fmt='(A)') "Coupling Type: SEMI-IMPLICIT"
+        else
+          write(*,*) "[error] -- Config file 'CouplingType' must be "// &
+                     "set to explicit (1) or semi-implicit (2)! "//     &
+                     "exiting ..."
+          call ESMF_Finalize(endflag=ESMF_END_ABORT)
+        end if 
+      end if
+!
+!-----------------------------------------------------------------------
 !     Get number of component (or model) 
 !-----------------------------------------------------------------------
 !        
@@ -142,6 +154,8 @@
           models(i)%name = "RTM"
         else if (i == Iwavee) then
           models(i)%name = "WAV"
+        else if (i == Icopro) then
+          models(i)%name = "COP"
         end if
 !
         models(i)%modActive = .false.
@@ -154,6 +168,15 @@
 !
       call ESMF_ConfigGetAttribute(cf, debugLevel,                      &
                                    label='DebugLevel:', rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+          line=__LINE__, file=FILENAME)) return
+!
+!-----------------------------------------------------------------------
+!     Set performance check flag
+!-----------------------------------------------------------------------
+!
+      call ESMF_ConfigGetAttribute(cf, enablePerfCheck,                 &
+                                   label='EnablePerfCheck:', rc=rc)
       if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
           line=__LINE__, file=FILENAME)) return
 !
@@ -228,13 +251,13 @@
 !
 !-----------------------------------------------------------------------
 !     Assign PETs to model components 
-!     River routing model uses latest PET of the ATM component
 !-----------------------------------------------------------------------
 !
       select case (runMod)
       case (iseq) ! sequential
         do i = 1, nModels
-          if ((i == Iatmos) .or. (i == Iocean) .or. (i == Iwavee)) then
+          if ((i == Iatmos) .or. (i == Iocean) .or.                     &
+              (i == Iwavee) .or. (i == Icopro)) then
             models(i)%nPets = petCount
           else if (i == Iriver) then
             models(i)%nPets = 1
@@ -244,7 +267,8 @@
             allocate(models(i)%petList(models(i)%nPets))
           end if
 !
-          if ((i == Iatmos) .or. (i == Iocean) .or. (i == Iwavee)) then
+          if ((i == Iatmos) .or. (i == Iocean) .or.                     &
+              (i == Iwavee) .or. (i == Icopro)) then
             models(i)%petList = (/ (k, k = 0, petCount-1) /)
           else if (i == Iriver) then
             models(i)%petList = (/ (k, k = petCount-1, petCount-1) /)
@@ -268,6 +292,8 @@
               models(i)%petList(j) = k 
             else if (i == Iwavee) then
               models(i)%petList(j) = k 
+            else if (i == Icopro) then
+              models(i)%petList(j) = k
             else if (i == Iriver) then
               ! assign last PET, if negative value given
               if (models(i)%nPets < 0) then
@@ -350,12 +376,20 @@
 !     Fix active connectors (put exceptions in here)
 !     - no interaction between RTM-ATM and OCN-RTM components
 !     - no interaction between RTM-WAV and WAV-RTM components
+!     - no interaction between COP-ATM, COP-OCN, COP-RTM and COP-WAV   
+!     - OCN-WAV and WAV-OCN coupling is not implemented yet !!!
 !-----------------------------------------------------------------------
 !
       connectors(Iriver,Iatmos)%modActive = .false.
       connectors(Iocean,Iriver)%modActive = .false.
       connectors(Iriver,Iwavee)%modActive = .false.
       connectors(Iwavee,Iriver)%modActive = .false.
+      connectors(Iocean,Iwavee)%modActive = .false.
+      connectors(Iwavee,Iocean)%modActive = .false.
+      connectors(Icopro,Iatmos)%modActive = .false.
+      connectors(Icopro,Iocean)%modActive = .false.
+      connectors(Icopro,Iriver)%modActive = .false.
+      connectors(Icopro,Iwavee)%modActive = .false.
 !
 !-----------------------------------------------------------------------
 !     Set interface for connector
@@ -503,6 +537,157 @@
       end if
 !
 !-----------------------------------------------------------------------
+!     Read name of co-processing script
+!-----------------------------------------------------------------------
+!
+        call ESMF_ConfigGetDim(cf, lineCount, columnCount,              &
+                               label='CoProcessorScript::', rc=rc)
+        if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,  &
+            line=__LINE__, file=FILENAME)) return
+!
+        call ESMF_ConfigFindLabel(cf, 'CoProcessorScript::', rc=rc)
+        if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,  &
+            line=__LINE__, file=FILENAME)) return
+!
+        if (.not. allocated(coproc_fnames)) then
+          allocate(coproc_fnames(lineCount))
+        end if
+!
+        do i = 1, lineCount
+          call ESMF_ConfigNextLine(cf, rc=rc)
+          if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,&
+              line=__LINE__, file=FILENAME)) return
+!
+          call ESMF_ConfigGetAttribute(cf, coproc_fnames(i), rc=rc)
+          if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,&
+              line=__LINE__, file=FILENAME)) return
+!
+          if (localPet == 0) then
+            write(*, fmt='(A,I3.3,A)') "Co-processing Pipeline [", i,   &
+                 "] = "//trim(coproc_fnames(i))
+          end if
+        end do
+!
+!-----------------------------------------------------------------------
+!     Read co-processing component tiles in x and y direction 
+!-----------------------------------------------------------------------
+!
+      if (models(Icopro)%modActive) then
+!
+      call ESMF_ConfigFindLabel(cf, 'CoProcessorTile:', rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+          line=__LINE__, file=FILENAME)) return
+!
+      do i = 1, 2
+        call ESMF_ConfigGetAttribute(cf, models(Icopro)%tile(i), rc=rc)
+        if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,  &
+            line=__LINE__, file=FILENAME)) return
+      end do
+!
+      if (any(models(Icopro)%tile == -1)) then
+        models(Icopro)%tile = auto_tile(models(Icopro)%nPets)
+      end if
+!
+      if (models(Icopro)%nPets /=                                       &
+          models(Icopro)%tile(1)*models(Icopro)%tile(2)) then
+        call ESMF_LogSetError(ESMF_FAILURE, rcToReturn=rc,              &
+             msg='[COP] -- nPets not equal to tileX*tileY')
+        return
+
+      end if
+!
+      if (localPet == 0) then
+        write(*, fmt='(A,I2,A,I2)') "Co-processing Tiles: ",            &
+              models(Icopro)%tile(1),"x",models(Icopro)%tile(2)
+      end if
+!
+      end if
+!
+!-----------------------------------------------------------------------
+!     Read width of halo or ghost region 
+!-----------------------------------------------------------------------
+!
+      if (models(Icopro)%modActive) then
+!
+      call ESMF_ConfigFindLabel(cf, 'CoProcessorHaloWidth:', rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+          line=__LINE__, file=FILENAME)) return
+!
+      call ESMF_ConfigGetAttribute(cf, models(Icopro)%haloWidth, rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+          line=__LINE__, file=FILENAME)) return
+!
+      if (localPet == 0) then
+        write(*, fmt='(A,I2)') "Co-processing Halo/Ghost Width: ",      &
+              models(Icopro)%haloWidth
+      end if
+!
+      end if 
+!
+!-----------------------------------------------------------------------
+!     Read vertical levels for model components
+!     Only valid if co-processing component is activated
+!-----------------------------------------------------------------------
+!
+      if (models(Icopro)%modActive) then
+!
+      models(Iatmos)%nLevs = ESMF_ConfigGetLen(cf,                      &
+                                               label='AtmLevs:', rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+          line=__LINE__, file=FILENAME)) return
+!
+      if (models(Iatmos)%nLevs .gt. 0) then
+        if (.not. allocated(models(Iatmos)%levs)) then
+          allocate(models(Iatmos)%levs(models(Iatmos)%nLevs))
+        end if  
+      end if
+!
+      call ESMF_ConfigFindLabel(cf, 'AtmLevs:', rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+          line=__LINE__, file=FILENAME)) return
+!
+      do i = 1, models(Iatmos)%nLevs
+        call ESMF_ConfigGetAttribute(cf, models(Iatmos)%levs(i), rc=rc)
+        if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,  &
+            line=__LINE__, file=FILENAME)) return
+      end do
+!
+      if (localPet == 0) then
+        write(fmt_123, fmt="('(A10, ', I3, 'F8.1)')")                   &
+              models(Iatmos)%nLevs
+        write(*, fmt=trim(fmt_123)) "ATM LEVS = ",  models(Iatmos)%levs
+      end if
+!
+      models(Iocean)%nLevs = ESMF_ConfigGetLen(cf,                      &
+                                               label='OcnLevs:', rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+          line=__LINE__, file=FILENAME)) return
+!
+      if (models(Iocean)%nLevs .gt. 0) then
+        if (.not. allocated(models(Iocean)%levs)) then
+          allocate(models(Iocean)%levs(models(Iocean)%nLevs))
+        end if
+      end if
+!
+      call ESMF_ConfigFindLabel(cf, 'OcnLevs:', rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+          line=__LINE__, file=FILENAME)) return
+!
+      do i = 1, models(Iocean)%nLevs
+        call ESMF_ConfigGetAttribute(cf, models(Iocean)%levs(i), rc=rc)
+        if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,  &
+            line=__LINE__, file=FILENAME)) return
+      end do
+!
+      if (localPet == 0) then
+        write(fmt_123, fmt="('(A10, ', I3, 'F8.1)')")                   &
+              models(Iocean)%nLevs
+        write(*, fmt=trim(fmt_123)) "OCN LEVS = ",  models(Iocean)%levs
+      end if
+!
+      end if 
+!
+!-----------------------------------------------------------------------
 !     Format definition 
 !-----------------------------------------------------------------------
 !
@@ -529,7 +714,7 @@
       integer :: i, j, k, l, m, n, s, ios1, ios2, pos1, pos2, nf
       logical :: extp, file_exists
       character(len=400) :: str
-      character(len=200) :: dum(10)
+      character(len=200) :: dum(11)
       logical :: flag
 !
       rc = ESMF_SUCCESS
@@ -573,6 +758,18 @@
             case('wav2ocn')
               i = Iwavee
               j = Iocean
+            case('atm2cop')
+              i = Iatmos
+              j = Icopro
+            case('ocn2cop')
+              i = Iocean
+              j = Icopro
+            case('rtm2cop')
+              i = Iriver
+              j = Icopro
+            case('wav2cop')
+              i = Iwavee
+              j = Icopro
             case default
               write(*,*) '[error] -- Undefined components: '//trim(str)
               call ESMF_Finalize(endflag=ESMF_END_ABORT)  
@@ -596,7 +793,7 @@
             do
               pos2 = index(str(pos1:), ':')
               if (pos2 == 0) then
-                dum(10) = trim(str(pos1:))
+                dum(11) = trim(str(pos1:))
                 exit
               else
                 dum(s) = trim(str(pos1:pos1+pos2-2))
@@ -623,6 +820,7 @@
               write(*,30) k, m,                                         &
                  adjustl(trim(models(i)%exportField(m)%short_name)),    &
                  adjustl(trim(models(i)%exportField(m)%long_name)),     &
+                 models(i)%exportField(m)%rank,                         &
                  adjustl(trim(models(i)%exportField(m)%units)),         &
                  adjustl(trim(models(i)%exportField(m)%export_units)),  &
                  adjustl(trim(GRIDDES(models(i)%exportField(m)%gtype))),&
@@ -652,6 +850,7 @@
               write(*,30) k, n,                                         &
                  adjustl(trim(models(j)%importField(n)%short_name)),    &
                  adjustl(trim(models(j)%importField(n)%long_name)),     &
+                 models(j)%importField(n)%rank,                         &
                  adjustl(trim(models(j)%importField(n)%units)),         &
                  adjustl(trim(models(j)%importField(n)%export_units)),  &
                  adjustl(trim(GRIDDES(models(j)%importField(n)%gtype))),&
@@ -674,7 +873,7 @@
 !     Format definition 
 !-----------------------------------------------------------------------
 !
- 30   format(2I3,1X,A6,1X,A32,1X,A10,1X,A10,1X,A10,                     &
+ 30   format(2I3,1X,A6,1X,A32,1X,I2,1X,A10,1X,A10,1X,A10,               &
              1X,A10,1X,2E15.4,1X,L,1X,A7)
 !
       end subroutine read_field_table
@@ -721,31 +920,26 @@
       field(n)%fid = n
       field(n)%short_name = trim(str(1))
       field(n)%long_name = trim(str(2))
-      if (trim(str(3)) == 'bilinear') then
+
+      if (trim(str(3)) == '2d' .or. trim(str(3)) == '2D') then
+        field(n)%rank = 2
+      else if (trim(str(3)) == '3d' .or. trim(str(3)) == '3D') then 
+        field(n)%rank = 3
+      end if
+
+      if (trim(str(4)) == 'bilinear') then
         field(n)%itype = Ibilin
-      else if (trim(str(3)) == 'conserv') then
+      else if (trim(str(4)) == 'conserv') then
         field(n)%itype = Iconsv
-      else if (trim(str(3)) == 'nearstod') then
+      else if (trim(str(4)) == 'nearstod') then
         field(n)%itype = Instod
-      else if (trim(str(3)) == 'neardtos') then
+      else if (trim(str(4)) == 'neardtos') then
         field(n)%itype = Indtos
       else
         field(n)%itype = Inone
       end if
 
       if (exflag) then 
-        if (trim(str(4)) == 'cross') then
-          field(n)%gtype = Icross
-        else if (trim(str(4)) == 'dot') then
-          field(n)%gtype = Idot
-        else if (trim(str(4)) == 'u') then
-          field(n)%gtype = Iupoint
-        else if (trim(str(4)) == 'v') then
-          field(n)%gtype = Ivpoint
-        else
-          field(n)%gtype = Inan
-        end if
-      else
         if (trim(str(5)) == 'cross') then
           field(n)%gtype = Icross
         else if (trim(str(5)) == 'dot') then
@@ -757,26 +951,42 @@
         else
           field(n)%gtype = Inan
         end if
+      else
+        if (trim(str(6)) == 'cross') then
+          field(n)%gtype = Icross
+        else if (trim(str(6)) == 'dot') then
+          field(n)%gtype = Idot
+        else if (trim(str(6)) == 'u') then
+          field(n)%gtype = Iupoint
+        else if (trim(str(6)) == 'v') then
+          field(n)%gtype = Ivpoint
+        else
+          field(n)%gtype = Inan
+        end if
       end if
-      field(n)%units = trim(str(6))
-      field(n)%export_units = trim(str(7))
-      if (trim(str(8)) == 'cf1') then
+
+      field(n)%units = trim(str(7))
+      field(n)%export_units = trim(str(8))
+
+      if (trim(str(9)) == 'cf1') then
         field(n)%scale_factor = cf1
-      else if (trim(str(8)) == '-cf1') then
+      else if (trim(str(9)) == '-cf1') then
         field(n)%scale_factor = -cf1
-      else if (trim(str(8)) == 'cf2') then
+      else if (trim(str(9)) == 'cf2') then
         field(n)%scale_factor = cf2
-      else if (trim(str(8)) == '-cf2') then
+      else if (trim(str(9)) == '-cf2') then
         field(n)%scale_factor = -cf2
-      else if (trim(str(8)) == 'cf3') then
+      else if (trim(str(9)) == 'cf3') then
         field(n)%scale_factor = cf3
-      else if (trim(str(8)) == '-cf3') then
+      else if (trim(str(9)) == '-cf3') then
         field(n)%scale_factor = -cf3
       else
-        read(str(8),*) field(n)%scale_factor
+        read(str(9),*) field(n)%scale_factor
       end if
-      read(str(9),*) field(n)%add_offset
-      if (trim(str(10)) == 'T' .or. trim(str(10)) == 't') then     
+
+      read(str(10),*) field(n)%add_offset
+
+      if (trim(str(11)) == 'T' .or. trim(str(11)) == 't') then     
         field(n)%enable_integral_adj = .true.
       else
         field(n)%enable_integral_adj = .false.
@@ -821,6 +1031,7 @@
         if (.not. models(i)%modActive) cycle
 !
         do j = 1, nf
+          if (.not. allocated(models(i)%exportField)) cycle
           lname = trim(models(i)%exportField(j)%long_name)
           sname = trim(models(i)%exportField(j)%short_name)
           units = trim(models(i)%exportField(j)%units)
@@ -842,6 +1053,7 @@
 !
         nf = size(models(i)%importField)
         do j = 1, nf
+          if (.not. allocated(models(i)%importField)) cycle
           lname = trim(models(i)%importField(j)%long_name)
           sname = trim(models(i)%importField(j)%short_name)
           units = trim(models(i)%importField(j)%units)

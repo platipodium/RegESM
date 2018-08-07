@@ -1,21 +1,8 @@
-!-----------------------------------------------------------------------
-!
-!     This file is part of ICTP RegESM.
-!
-!     ICTP RegESM is free software: you can redistribute it and/or modify
-!     it under the terms of the GNU General Public License as published by
-!     the Free Software Foundation, either version 3 of the License, or
-!     (at your option) any later version.
-!
-!     ICTP RegESM is distributed in the hope that it will be useful,
-!     but WITHOUT ANY WARRANTY; without even the implied warranty of
-!     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-!     GNU General Public License for more details.
-!
-!     You should have received a copy of the GNU General Public License
-!     along with ICTP RegESM.  If not, see <http://www.gnu.org/licenses/>.
-!
-!-----------------------------------------------------------------------
+!=======================================================================
+! Regional Earth System Model (RegESM)
+! Copyright (c) 2013-2017 Ufuk Turuncoglu
+! Licensed under the MIT License.
+!=======================================================================
 #define FILENAME "mod_esmf_wav.F90"
 !
 !-----------------------------------------------------------------------
@@ -167,7 +154,7 @@
 !-----------------------------------------------------------------------
 !
       do i = 1, ubound(models(Iwavee)%importField, dim=1)
-        call NUOPC_StateAdvertiseField(importState,                     &
+        call NUOPC_Advertise(importState,                               &
              StandardName=trim(models(Iwavee)%importField(i)%long_name),&
              name=trim(models(Iwavee)%importField(i)%short_name), rc=rc)
         if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,  &
@@ -179,7 +166,7 @@
 !-----------------------------------------------------------------------
 !
       do i = 1, ubound(models(Iwavee)%exportField, dim=1)
-        call NUOPC_StateAdvertiseField(exportState,                     &
+        call NUOPC_Advertise(exportState,                               &
              StandardName=trim(models(Iwavee)%exportField(i)%long_name),&
              name=trim(models(Iwavee)%exportField(i)%short_name), rc=rc)
         if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,  &
@@ -520,10 +507,11 @@
 !     Local variable declarations 
 !-----------------------------------------------------------------------
 !
-      integer :: itemCount
+      integer :: itemCount, localPet
       logical :: atCorrectTime
       character(ESMF_MAXSTR), allocatable :: itemNameList(:)
 !
+      type(ESMF_VM) :: vm
       type(ESMF_Time) :: startTime, currTime
       type(ESMF_Clock) :: driverClock 
       type(ESMF_Field) :: field
@@ -538,6 +526,14 @@
       call NUOPC_ModelGet(gcomp, driverClock=driverClock, rc=rc)
       if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
           line=__LINE__, file=FILENAME)) return
+!
+      call ESMF_GridCompGet(gcomp, vm=vm, rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+                             line=__LINE__, file=FILENAME)) return
+!
+      call ESMF_VMGet(vm, localPet=localPet, rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+                             line=__LINE__, file=FILENAME)) return
 !
 !-----------------------------------------------------------------------
 !     Get the start time and current time out of the clock
@@ -582,7 +578,11 @@
       if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
           line=__LINE__, file=FILENAME)) return
 !
-      atCorrectTime = NUOPC_FieldIsAtTime(field, currTime, rc=rc)
+      atCorrectTime = NUOPC_IsAtTime(field, currTime, rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+          line=__LINE__, file=FILENAME)) return
+!
+      call print_timestamp(field, currTime, localPet, "WAV", rc)      
       if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
           line=__LINE__, file=FILENAME)) return
 !
@@ -983,7 +983,7 @@
 !     Add field export state
 !-----------------------------------------------------------------------
 !
-      call NUOPC_StateRealizeField(exportState, field=field, rc=rc) 
+      call NUOPC_Realize(exportState, field=field, rc=rc) 
       if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
                              line=__LINE__, file=FILENAME)) return
       end do
@@ -1073,7 +1073,7 @@
 !     Add field import state
 !-----------------------------------------------------------------------
 !
-      call NUOPC_StateRealizeField(importState, field=field, rc=rc) 
+      call NUOPC_Realize(importState, field=field, rc=rc) 
       if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
                              line=__LINE__, file=FILENAME)) return
       end do
@@ -1366,6 +1366,12 @@
       case ('wndv')
         vs_esmf(1:nsea) = pack(arr2d, l_s_mask)
         vs_esmf(1:nsea) = (vs_esmf(1:nsea)*sfac)+addo
+      case ('ustr')
+        us_esmf(1:nsea) = pack(arr2d, l_s_mask)
+        us_esmf(1:nsea) = (us_esmf(1:nsea)*sfac)+addo
+      case ('wdir')
+        vs_esmf(1:nsea) = pack(arr2d, l_s_mask)
+        vs_esmf(1:nsea) = (vs_esmf(1:nsea)*sfac)+addo
       end select
 !
 !-----------------------------------------------------------------------
@@ -1406,7 +1412,7 @@
 !     Used module declarations 
 !-----------------------------------------------------------------------
 !
-      use wam_model_module, only : z0, tauw
+      use wam_model_module, only : z0, ustar, tauw
 !
       implicit none
 !
@@ -1537,6 +1543,8 @@
       select case (trim(adjustl(itemNameList(i))))
       case ('zo')
         call WAV_Unpack(vm, ptr, imin, imax, jmin, jmax, z0, rc)
+      case ('ustar')
+        call WAV_Unpack(vm, ptr, imin, imax, jmin, jmax, ustar, rc)
       case ('tauw')
         call WAV_Unpack(vm, ptr, imin, imax, jmin, jmax, tauw, rc)
       end select

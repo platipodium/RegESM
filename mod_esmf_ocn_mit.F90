@@ -1,21 +1,8 @@
-!-----------------------------------------------------------------------
-!
-!     This file is part of ITU RegESM.
-!
-!     ITU RegESM is free software: you can redistribute it and/or modify
-!     it under the terms of the GNU General Public License as published by
-!     the Free Software Foundation, either version 3 of the License, or
-!     (at your option) any later version.
-!
-!     ITU RegESM is distributed in the hope that it will be useful,
-!     but WITHOUT ANY WARRANTY; without even the implied warranty of
-!     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-!     GNU General Public License for more details.
-!
-!     You should have received a copy of the GNU General Public License
-!     along with ITU RegESM.  If not, see <http://www.gnu.org/licenses/>.
-!
-!-----------------------------------------------------------------------
+!=======================================================================
+! Regional Earth System Model (RegESM)
+! Copyright (c) 2013-2017 Ufuk Turuncoglu
+! Licensed under the MIT License.
+!=======================================================================
 #define FILENAME "mod_esmf_ocn_mit.F90"
 !
 !-----------------------------------------------------------------------
@@ -173,7 +160,7 @@
 !-----------------------------------------------------------------------
 !
       do i = 1, ubound(models(Iocean)%importField, dim=1)
-        call NUOPC_StateAdvertiseField(importState,                     &
+        call NUOPC_Advertise(importState,                               &
              StandardName=trim(models(Iocean)%importField(i)%long_name),&
              name=trim(models(Iocean)%importField(i)%short_name), rc=rc)
         if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,  &
@@ -185,7 +172,7 @@
 !-----------------------------------------------------------------------
 !
       do i = 1, ubound(models(Iocean)%exportField, dim=1)
-        call NUOPC_StateAdvertiseField(exportState,                     &
+        call NUOPC_Advertise(exportState,                               &
              StandardName=trim(models(Iocean)%exportField(i)%long_name),&
              name=trim(models(Iocean)%exportField(i)%short_name), rc=rc)
         if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,  &
@@ -537,11 +524,13 @@
 !     Local variable declarations 
 !-----------------------------------------------------------------------
 !
-      integer :: itemCount
+      integer :: itemCount, localPet
       logical :: atCorrectTime
       character(ESMF_MAXSTR), allocatable :: itemNameList(:)
 !
+      type(ESMF_VM) :: vm
       type(ESMF_Time) :: startTime, currTime
+      type(ESMF_TimeInterval) :: timeStep
       type(ESMF_Clock) :: driverClock
       type(ESMF_Field) :: field
       type(ESMF_State) :: importState
@@ -555,6 +544,14 @@
       call NUOPC_ModelGet(gcomp, driverClock=driverClock, rc=rc)
       if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
           line=__LINE__, file=FILENAME)) return
+!
+      call ESMF_GridCompGet(gcomp, vm=vm, rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+                             line=__LINE__, file=FILENAME)) return
+!
+      call ESMF_VMGet(vm, localPet=localPet, rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+                             line=__LINE__, file=FILENAME)) return
 !
 !-----------------------------------------------------------------------
 !     Get the start time and current time out of the clock
@@ -599,9 +596,23 @@
       if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
           line=__LINE__, file=FILENAME)) return
 !
-      atCorrectTime = NUOPC_FieldIsAtTime(field, currTime, rc=rc)
-      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
-          line=__LINE__, file=FILENAME)) return
+      if (cplType == 1) then
+        atCorrectTime = NUOPC_IsAtTime(field, currTime, rc=rc)
+        if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,  &
+            line=__LINE__, file=FILENAME)) return
+!
+        call print_timestamp(field, currTime, localPet, "OCN", rc)
+        if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,  &
+            line=__LINE__, file=FILENAME)) return
+      else
+        atCorrectTime = NUOPC_IsAtTime(field, currTime+timeStep, rc=rc)
+        if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,  &
+            line=__LINE__, file=FILENAME)) return
+!
+        call print_timestamp(field, currTime+timeStep, localPet, "OCN", rc)
+        if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,  &
+            line=__LINE__, file=FILENAME)) return
+      end if
 !
       if (.not. atCorrectTime) then
         call ESMF_LogSetError(ESMF_RC_ARG_BAD,                          &
@@ -624,7 +635,7 @@
       if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
           line=__LINE__, file=FILENAME)) return
 !
-      atCorrectTime = NUOPC_FieldIsAtTime(field, startTime, rc=rc)
+      atCorrectTime = NUOPC_IsAtTime(field, startTime, rc=rc)
       if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
           line=__LINE__, file=FILENAME)) return
 !
@@ -1280,7 +1291,7 @@
 !     Add field export state
 !-----------------------------------------------------------------------
 !
-      call NUOPC_StateRealizeField(exportState, field=field, rc=rc) 
+      call NUOPC_Realize(exportState, field=field, rc=rc) 
       if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
                              line=__LINE__, file=FILENAME)) return
       end do
@@ -1387,7 +1398,7 @@
 !     Add field import state
 !-----------------------------------------------------------------------
 !
-      call NUOPC_StateRealizeField(importState, field=field, rc=rc) 
+      call NUOPC_Realize(importState, field=field, rc=rc) 
       if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
                              line=__LINE__, file=FILENAME)) return
       end do

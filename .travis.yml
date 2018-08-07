@@ -1,0 +1,25 @@
+language: c
+sudo: required
+env:
+  global:
+    secure: "aHarT+/H2+MjL1T86IzbOMfgxHFQz3R2PBjhaGtb95e4yA9fB0MCjDa5Zq3uY+5K2/nv0HaKM+nYNGDmpoBchuhPlNX4GXNKkPWgRyCjtlCK23IiSGVFkObZwJt1gzGHN23UKHxNTmOksUrMRgVc4sKkfvY/SeUG7dYBG92PV+1BcvnRwPCk4w5SXBnglhin1D2YDMmYDz0IzH/vyxXehCHvNK6+WFL0pTyXKaUJNVlULWNf+XIlA4nw5EaOlIL9FhUcxdNwWrB4wq7nR2uWUT4Nm+pPFGrLb9XQMQAMKF5vIq9UOxmozPl75MCEysPZ9XgnldQ2B/HBGUCU5rvuLMb6UiAc9DuY7CTPBXpM5U4r7jPNlVUllcGG/25A4JacxUKOlJzs5HrrHkOkuc7rfrfwyu/KDuAya6UhPMo0q6iUYb2kbgzaixevt0QZ/DQB5Fk0JHiqDbrw8Tx0RLXyXNSks1xj8f5U1804bzI91WzLG1N14yE+HAxtAmmBhVULtH/cSAfBZlYNfJFQW2A+2A4xQNlmUeHMPFnF+VIIqvth2XIH/gqIm/+iTMhVAoVz+k2pWmBqrbV4JfSXmXDfbp0iEGcex1tMxUFAZ6Obi5nYWHFP8xW0++rkvJFDh4NLhFQ4O53zq/iCc5u5/b1NVKZdXNQSIDVBgA4buJ1nXtQ="
+addons:
+  apt:
+    packages:
+    - gfortran
+    - csh
+before_install:
+- cd $TRAVIS_BUILD_DIR
+- mkdir ../progs
+- cd ../progs
+- export PROGS=$PWD
+- cd -
+- ./install-deps.sh $PROGS
+- ./install-test.sh $PROGS $SRC_LINK
+script:
+- source $PROGS/env_progs
+- ./bootstrap.sh
+- ./configure --prefix=$TRAVIS_BUILD_DIR --with-atm=$PROGS/atm --with-ocn=$PROGS/ocn/Build
+  --with-rtm=$PROGS/rtm --with-wav=$PROGS/wav/obj
+- make
+- make install

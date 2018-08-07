@@ -1,22 +1,9 @@
-!-----------------------------------------------------------------------
-!
-!     This file is part of ITU RegESM.
-!
-!     ITU RegESM is free software: you can redistribute it and/or modify
-!     it under the terms of the GNU General Public License as published by
-!     the Free Software Foundation, either version 3 of the License, or
-!     (at your option) any later version.
-!
-!     ITU RegESM is distributed in the hope that it will be useful,
-!     but WITHOUT ANY WARRANTY; without even the implied warranty of
-!     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-!     GNU General Public License for more details.
-!
-!     You should have received a copy of the GNU General Public License
-!     along with ITU RegESM.  If not, see <http://www.gnu.org/licenses/>.
-!
-!-----------------------------------------------------------------------
-#define FILENAME "mod_esmf_ocn.F90"
+!=======================================================================
+! Regional Earth System Model (RegESM)
+! Copyright (c) 2013-2017 Ufuk Turuncoglu
+! Licensed under the MIT License.
+!=======================================================================
+#define FILENAME "mod_esmf_ocn_roms.F90"
 !
 !-----------------------------------------------------------------------
 !     OCN gridded component code 
@@ -156,6 +143,8 @@
 !-----------------------------------------------------------------------
 !
       integer :: i
+      character(ESMF_MAXSTR), pointer :: impConnectedList(:)
+      character(ESMF_MAXSTR), pointer :: impStdNameList(:)
 !
       rc = ESMF_SUCCESS
 !
@@ -164,7 +153,7 @@
 !-----------------------------------------------------------------------
 !
       do i = 1, ubound(models(Iocean)%importField, dim=1)
-        call NUOPC_StateAdvertiseField(importState,                     &
+        call NUOPC_Advertise(importState,                               &
              StandardName=trim(models(Iocean)%importField(i)%long_name),&
              name=trim(models(Iocean)%importField(i)%short_name), rc=rc)
         if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,  &
@@ -176,7 +165,7 @@
 !-----------------------------------------------------------------------
 !
       do i = 1, ubound(models(Iocean)%exportField, dim=1)
-        call NUOPC_StateAdvertiseField(exportState,                     &
+        call NUOPC_Advertise(exportState,                               &
              StandardName=trim(models(Iocean)%exportField(i)%long_name),&
              name=trim(models(Iocean)%exportField(i)%short_name), rc=rc)
         if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,  &
@@ -260,15 +249,27 @@
 !     Set-up grid and load coordinate data 
 !-----------------------------------------------------------------------
 !
-      call OCN_SetGridArrays(gcomp, localPet, rc)
+      call OCN_SetGridArrays2d(gcomp, localPet, rc)
       if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
                              line=__LINE__, file=FILENAME)) return
+!
+      if (models(Icopro)%modActive) then
+      call OCN_SetGridArrays3d(gcomp, localPet, rc) 
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+                             line=__LINE__, file=FILENAME)) return
+      end if
 !
 !-----------------------------------------------------------------------
 !     Set-up fields and register to import/export states
 !-----------------------------------------------------------------------
 !
-      call OCN_SetStates(gcomp, rc)
+      call OCN_SetStates2d(gcomp, rc)
+!
+      if (models(Icopro)%modActive) then
+      call OCN_SetStates3d(gcomp, rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+                             line=__LINE__, file=FILENAME)) return
+      end if
 !
       end subroutine OCN_SetInitializeP2
 !
@@ -331,7 +332,7 @@
 !-----------------------------------------------------------------------
 !
       type(ESMF_GridComp) :: gcomp
-      integer :: rc
+      integer, intent(out) :: rc
 !
 !-----------------------------------------------------------------------
 !     Local variable declarations 
@@ -563,9 +564,15 @@
 !     Modify component clock time step 
 !-----------------------------------------------------------------------
 !
-      fac1 = maxval(connectors(Iocean,:)%divDT,mask=models(:)%modActive)
-      fac2 = maxval(connectors(:,Iocean)%divDT,mask=models(:)%modActive)
-      maxdiv = max(fac1, fac2)
+!      if (models(Icopro)%modActive) then
+!        maxdiv = 1
+!      else
+        fac1 = maxval(connectors(Iocean,:)%divDT,                       &
+                      mask=models(:)%modActive)
+        fac2 = maxval(connectors(:,Iocean)%divDT,                       &
+                      mask=models(:)%modActive)
+        maxdiv = max(fac1, fac2)
+!      end if
 !
       call ESMF_ClockSet(cmpClock, name='ocn_clock',                    &
                          refTime=cmpRefTime, timeStep=timeStep/maxdiv,  &
@@ -590,22 +597,38 @@
 !     Local variable declarations 
 !-----------------------------------------------------------------------
 !
-      integer :: itemCount
+      integer :: i, itemCount, localPet, div, rsec
       logical :: atCorrectTime
       character(ESMF_MAXSTR), allocatable :: itemNameList(:)
 !
-      type(ESMF_Time)  :: startTime, currTime
-      type(ESMF_Clock) :: driverClock
+      type(ESMF_VM) :: vm
+      type(ESMF_Time)  :: currTimeCmp, currTimeDrv
+      type(ESMF_Time)  :: strTimeCmp
+      type(ESMF_TimeInterval) :: timeStepCmp, timeStepDrv
+      type(ESMF_Clock) :: modelClock, driverClock
       type(ESMF_Field) :: field
       type(ESMF_State) :: importState
 !
       rc = ESMF_SUCCESS
 !
 !-----------------------------------------------------------------------
+!     Query component
+!-----------------------------------------------------------------------
+!
+      call ESMF_GridCompGet(gcomp, vm=vm, rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+                             line=__LINE__, file=FILENAME)) return
+!
+      call ESMF_VMGet(vm, localPet=localPet, rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+                             line=__LINE__, file=FILENAME)) return
+!
+!-----------------------------------------------------------------------
 !     Query component for the driverClock
 !-----------------------------------------------------------------------
 !
-      call NUOPC_ModelGet(gcomp, driverClock=driverClock, rc=rc)
+      call NUOPC_ModelGet(gcomp, driverClock=driverClock,               &
+                          modelClock=modelClock, rc=rc)
       if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
           line=__LINE__, file=FILENAME)) return
 !
@@ -613,10 +636,30 @@
 !     Get the start time and current time out of the clock
 !-----------------------------------------------------------------------
 !
-      call ESMF_ClockGet(driverClock, startTime=startTime,              &
-                         currTime=currTime, rc=rc)
+      call ESMF_ClockGet(driverClock, currTime=currTimeDrv,             &
+                         timeStep=timeStepDrv, rc=rc)
       if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
           line=__LINE__, file=FILENAME)) return
+!
+      call ESMF_ClockGet(modelClock, currTime=currTimeCmp,              &
+                         startTime=strTimeCmp, timeStep=timeStepCmp,    &
+                         rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+          line=__LINE__, file=FILENAME)) return
+!
+!-----------------------------------------------------------------------
+!     Check import field or not? 
+!-----------------------------------------------------------------------
+!
+      div = maxval(connectors(:,Iocean)%divDT, mask=models(:)%modActive)
+!
+      call ESMF_TimeIntervalGet(mod((currTimeCmp-strTimeCmp),           &
+                                    esmTimeStep/div),                   &
+                                    s=rsec, rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+          line=__LINE__, file=FILENAME)) return
+!
+      if (rsec == 0) then
 !
 !-----------------------------------------------------------------------
 !     Query component for its clock and importState
@@ -647,14 +690,33 @@
 !-----------------------------------------------------------------------
 !
       if (itemCount > 0) then
-      call ESMF_StateGet(importState, itemName=trim(itemNameList(1)),   &
+!
+      do i = 1, itemCount
+!
+      call ESMF_StateGet(importState, itemName=trim(itemNameList(i)),   &
                          field=field, rc=rc)
       if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
           line=__LINE__, file=FILENAME)) return
 !
-      atCorrectTime = NUOPC_FieldIsAtTime(field, currTime, rc=rc)
-      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
-          line=__LINE__, file=FILENAME)) return
+      if (cplType == 1) then
+        atCorrectTime = NUOPC_IsAtTime(field, currTimeCmp, rc=rc)
+        if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,  &
+            line=__LINE__, file=FILENAME)) return
+!
+        call print_timestamp(field, currTimeCmp, localPet, "OCN", rc)
+        if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,  &
+            line=__LINE__, file=FILENAME)) return
+      else
+        atCorrectTime = NUOPC_IsAtTime(field, currTimeCmp+timeStepCmp,  &
+                                       rc=rc)
+        if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,  &
+            line=__LINE__, file=FILENAME)) return
+!
+        call print_timestamp(field, currTimeCmp+timeStepCmp, localPet,  &
+                             "OCN", rc)
+        if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,  &
+            line=__LINE__, file=FILENAME)) return
+      end if
 !
       if (.not. atCorrectTime) then
         call ESMF_LogSetError(ESMF_RC_ARG_BAD,                          &
@@ -664,36 +726,40 @@
                               rcToReturn=rc)
         return
       end if
+!
+      end do
+      end if
+!
       end if
 !
 !-----------------------------------------------------------------------
 !     Check fields in the importState (slow time step) 
 !-----------------------------------------------------------------------
 !
-      if (models(Iriver)%modActive) then
+!      if (models(Iriver)%modActive) then
 !
-      call ESMF_StateGet(importState, itemName="rdis",                  &
-                         field=field, rc=rc)
-      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
-          line=__LINE__, file=FILENAME)) return
+!      call ESMF_StateGet(importState, itemName="rdis",                  &
+!                         field=field, rc=rc)
+!      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+!          line=__LINE__, file=FILENAME)) return
 !
-      atCorrectTime = NUOPC_FieldIsAtTime(field, startTime, rc=rc)
-      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
-          line=__LINE__, file=FILENAME)) return
+!      atCorrectTime = NUOPC_IsAtTime(field, startTime, rc=rc)
+!      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+!          line=__LINE__, file=FILENAME)) return
 !
-      if (.not. atCorrectTime) then
-        call ESMF_LogSetError(ESMF_RC_ARG_BAD,                          &
-                              msg="NUOPC INCOMPATIBILITY DETECTED: "//  &
-                              "Import Fields not at correct time",      &
-                              line=__LINE__, file=FILENAME,             &
-                              rcToReturn=rc)
-        return
-      end if
-      end if
+!      if (.not. atCorrectTime) then
+!        call ESMF_LogSetError(ESMF_RC_ARG_BAD,                          &
+!                              msg="NUOPC INCOMPATIBILITY DETECTED: "//  &
+!                              "Import Fields not at correct time",      &
+!                              line=__LINE__, file=FILENAME,             &
+!                              rcToReturn=rc)
+!        return
+!      end if
+!      end if
 !
       end subroutine OCN_CheckImport
 !
-      subroutine OCN_SetGridArrays(gcomp, localPet, rc)
+      subroutine OCN_SetGridArrays2d(gcomp, localPet, rc)
 !
 !-----------------------------------------------------------------------
 !     Used module declarations 
@@ -821,6 +887,7 @@
 !-----------------------------------------------------------------------
 !
       do i = 1, 4 
+!
       if (models(Iocean)%mesh(i)%gtype == Iupoint) then
         staggerLoc = ESMF_STAGGERLOC_EDGE1
         staggerEdgeLWidth = (/0,1/)
@@ -848,7 +915,7 @@
                                             gridEdgeLWidth=(/1,1/),     &
                                             gridEdgeUWidth=(/1,1/),     &
                                             indexflag=ESMF_INDEX_GLOBAL,&
-                                            name="ocn_grid",            &
+                                            name="ocn_grid2d",          &
                                             rc=rc)
       if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
                              line=__LINE__, file=FILENAME)) return
@@ -964,9 +1031,8 @@
 !
       if (models(Iocean)%mesh(i)%gtype == Idot) then
         if (debugLevel > 0) then
-        write(*,30) localPet, j, adjustl("DAT/OCN/GRD/"//name),         &
-        lbound(GRID(ng)%lonp, dim=1), ubound(GRID(ng)%lonp, dim=1),     &
-        lbound(GRID(ng)%lonp, dim=2), ubound(GRID(ng)%lonp, dim=2)
+          write(*,30) localPet, j, adjustl("DAT/OCN/GRD/"//name),       &
+                      IstrU, IendR, JstrV, JendR
         end if
 !
         do jj = JstrV, JendR
@@ -979,9 +1045,8 @@
         end do
       else if (models(Iocean)%mesh(i)%gtype == Icross) then
         if (debugLevel > 0) then
-        write(*,30) localPet, j, adjustl("DAT/OCN/GRD/"//name),         &
-        lbound(GRID(ng)%lonr, dim=1), ubound(GRID(ng)%lonr, dim=1),     &
-        lbound(GRID(ng)%lonr, dim=2), ubound(GRID(ng)%lonr, dim=2)
+          write(*,30) localPet, j, adjustl("DAT/OCN/GRD/"//name),       &
+                      IstrR, IendR, JstrR, JendR
         end if
 !
         do jj = JstrR, JendR
@@ -994,9 +1059,8 @@
         end do
       else if (models(Iocean)%mesh(i)%gtype == Iupoint) then
         if (debugLevel > 0) then
-        write(*,30) localPet, j, adjustl("DAT/OCN/GRD/"//name),         &
-        lbound(GRID(ng)%lonu, dim=1), ubound(GRID(ng)%lonu, dim=1),     &
-        lbound(GRID(ng)%lonu, dim=2), ubound(GRID(ng)%lonu, dim=2)
+          write(*,30) localPet, j, adjustl("DAT/OCN/GRD/"//name),       &
+                      IstrU, IendU, JstrU, JendU
         end if
 !
         do jj = JstrU, JendU
@@ -1009,9 +1073,8 @@
         end do
       else if (models(Iocean)%mesh(i)%gtype == Ivpoint) then
         if (debugLevel > 0) then
-        write(*,30) localPet, j, adjustl("DAT/OCN/GRD/"//name),         &
-        lbound(GRID(ng)%lonv, dim=1), ubound(GRID(ng)%lonv, dim=1),     &
-        lbound(GRID(ng)%lonv, dim=2), ubound(GRID(ng)%lonv, dim=2)
+          write(*,30) localPet, j, adjustl("DAT/OCN/GRD/"//name),       &
+                      IstrV, IendV, JstrV, JendV
         end if
 !
         do jj = JstrV, JendV
@@ -1220,9 +1283,415 @@
  20   format(" RIVER(",I2.2,") - ",I4,3F6.2," [",I3.3,":",I3.3,"] - ",I2," ",A)
  30   format(" PET(",I3.3,") - DE(",I2.2,") - ", A20, " : ", 4I8)
 !
-      end subroutine OCN_SetGridArrays
+      end subroutine OCN_SetGridArrays2d
 !
-      subroutine OCN_SetStates(gcomp, rc)
+      subroutine OCN_SetGridArrays3d(gcomp, localPet, rc)
+!
+!-----------------------------------------------------------------------
+!     Used module declarations 
+!-----------------------------------------------------------------------
+!
+      use mod_grid , only : GRID
+      use mod_param, only : NtileI, NtileJ, BOUNDS, Lm, Mm, Ngrids
+!
+      implicit none
+!
+!-----------------------------------------------------------------------
+!     Imported variable declarations 
+!-----------------------------------------------------------------------
+!
+      type(ESMF_GridComp), intent(inout) :: gcomp
+      integer :: localPet
+      integer :: rc
+!
+!-----------------------------------------------------------------------
+!     Local variable declarations 
+!-----------------------------------------------------------------------
+!
+      integer :: i, j, ii, jj, kk, kz, ng, nr, tile, localDECount
+      integer :: IstrR, IendR, JstrR, JendR
+      integer :: IstrU, IendU, JstrU, JendU     
+      integer :: IstrV, IendV, JstrV, JendV
+      integer :: LBi, UBi, LBj, UBj
+      integer :: staggerEdgeLWidth(3)
+      integer :: staggerEdgeUWidth(3)
+      integer, allocatable :: deBlockList(:,:,:)
+      real(ESMF_KIND_R8), pointer :: ptrX(:,:,:)
+      real(ESMF_KIND_R8), pointer :: ptrY(:,:,:)
+      real(ESMF_KIND_R8), pointer :: ptrZ(:,:,:)
+      real(ESMF_KIND_R8), pointer :: ptrA(:,:,:)
+      integer(ESMF_KIND_I4), pointer :: ptrM(:,:,:)
+      character(ESMF_MAXSTR) :: cname, name, msgString
+!
+      type(ESMF_Array) :: arrX, arrY, arrM, arrA
+      type(ESMF_StaggerLoc) :: staggerLoc
+      type(ESMF_DistGrid) :: distGrid
+      type(ESMF_VM) :: vm
+!
+      rc = ESMF_SUCCESS
+!
+!-----------------------------------------------------------------------
+!     Check number of nested grids 
+!-----------------------------------------------------------------------
+!
+      call ESMF_GridCompGet(gcomp, vm=vm, name=cname, rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+          line=__LINE__, file=FILENAME)) return
+!
+      if (Ngrids > 1) then
+        write(msgString,'(A,I3)') trim(cname)//                         &
+              ': number of nested grid is', Ngrids,                     &
+              'coupled model only interacts with outermost one!'
+        call ESMF_LogWrite(trim(msgString), ESMF_LOGMSG_ERROR)        
+        ng = 1
+      else
+        ng = Ngrids
+      end if
+!
+!-----------------------------------------------------------------------
+!     Get limits of the grid arrays (based on PET and nest level)
+!-----------------------------------------------------------------------
+!
+      IstrR = BOUNDS(ng)%IstrR(localPet)
+      IendR = BOUNDS(ng)%IendR(localPet)
+      JstrR = BOUNDS(ng)%JstrR(localPet)
+      JendR = BOUNDS(ng)%JendR(localPet)
+!
+      IstrU = BOUNDS(ng)%Istr(localPet)
+      IendU = BOUNDS(ng)%IendR(localPet)
+      JstrU = BOUNDS(ng)%JstrR(localPet)
+      JendU = BOUNDS(ng)%JendR(localPet)
+!
+      IstrV = BOUNDS(ng)%IstrR(localPet)
+      IendV = BOUNDS(ng)%IendR(localPet)
+      JstrV = BOUNDS(ng)%Jstr(localPet)
+      JendV = BOUNDS(ng)%JendR(localPet)
+!
+      LBi = BOUNDS(ng)%LBi(localPet)
+      UBi = BOUNDS(ng)%UBi(localPet)
+      LBj = BOUNDS(ng)%LBj(localPet)
+      UBj = BOUNDS(ng)%UBj(localPet)
+!
+      kz = models(Iocean)%nLevs
+!
+      if (.not.allocated(deBlockList)) then
+        allocate(deBlockList(3,2,NtileI(ng)*NtileJ(ng)))
+      end if
+      do tile=0,NtileI(ng)*NtileJ(ng)-1
+        deBlockList(1,1,tile+1)=BOUNDS(ng)%Istr(tile)
+        deBlockList(1,2,tile+1)=BOUNDS(ng)%Iend(tile)
+        deBlockList(2,1,tile+1)=BOUNDS(ng)%Jstr(tile)
+        deBlockList(2,2,tile+1)=BOUNDS(ng)%Jend(tile)
+        deBlockList(3,1,tile+1)=1
+        deBlockList(3,2,tile+1)=kz
+      end do
+!
+!-----------------------------------------------------------------------
+!     Create ESMF DistGrid based on model domain decomposition
+!-----------------------------------------------------------------------
+!
+      kz = models(Iocean)%nLevs
+!
+      distGrid = ESMF_DistGridCreate(minIndex=(/ 1, 1, 1 /),            &
+                                     maxIndex=(/ Lm(ng), Mm(ng), kz /), &
+                                     deBlockList=deBlockList,           &
+                                     rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+                             line=__LINE__, file=FILENAME)) return
+!
+!-----------------------------------------------------------------------
+!     Deallocate arrays    
+!-----------------------------------------------------------------------
+!
+      if (allocated(deBlockList)) deallocate(deBlockList) 
+!
+!-----------------------------------------------------------------------
+!     Define component grid (dot and cross points)
+!-----------------------------------------------------------------------
+!
+      if (.not. allocated(models(Iocean)%mesh)) then
+        allocate(models(Iocean)%mesh(4))
+        models(Iocean)%mesh(1)%gtype = Icross
+        models(Iocean)%mesh(2)%gtype = Idot
+        models(Iocean)%mesh(3)%gtype = Iupoint
+        models(Iocean)%mesh(4)%gtype = Ivpoint
+      end if
+!
+!-----------------------------------------------------------------------
+!     Set staggering type 
+!-----------------------------------------------------------------------
+!
+      do i = 1, 4 
+!
+      if (models(Iocean)%mesh(i)%gtype == Iupoint) then
+        staggerLoc = ESMF_STAGGERLOC_EDGE1
+        staggerEdgeLWidth = (/0,1,0/)
+        staggerEdgeUWidth = (/1,1,0/)
+      else if (models(Iocean)%mesh(i)%gtype == Ivpoint) then
+        staggerLoc = ESMF_STAGGERLOC_EDGE2
+        staggerEdgeLWidth = (/1,0,0/)
+        staggerEdgeUWidth = (/1,1,0/)
+      else if (models(Iocean)%mesh(i)%gtype == Icross) then
+        staggerLoc = ESMF_STAGGERLOC_CENTER
+        staggerEdgeLWidth = (/1,1,0/)
+        staggerEdgeUWidth = (/1,1,0/)
+      else if (models(Iocean)%mesh(i)%gtype == Idot) then
+        staggerLoc = ESMF_STAGGERLOC_CORNER
+        staggerEdgeLWidth = (/0,0,0/)
+        staggerEdgeUWidth = (/1,1,0/)
+      end if
+!
+!-----------------------------------------------------------------------
+!     Create ESMF Grid
+!-----------------------------------------------------------------------
+!
+      if (i == 1) then
+      models(Iocean)%grid3d = ESMF_GridCreate(distgrid=distGrid,        &
+                                            gridEdgeLWidth=(/1,1,0/),   &
+                                            gridEdgeUWidth=(/1,1,0/),   &
+                                            indexflag=ESMF_INDEX_GLOBAL,&
+                                            name="ocn_grid3d",&
+                                            rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,&
+                             line=__LINE__, file=FILENAME)) return
+      end if
+!
+!-----------------------------------------------------------------------
+!     Allocate coordinates 
+!-----------------------------------------------------------------------
+!
+      call ESMF_GridAddCoord(models(Iocean)%grid3d,                     &
+                             staggerLoc=staggerLoc,                     &
+                             staggerEdgeLWidth=staggerEdgeLWidth,       &
+                             staggerEdgeUWidth=staggerEdgeUWidth,       &
+                             rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+                             line=__LINE__, file=FILENAME)) return
+!
+!-----------------------------------------------------------------------
+!     Allocate items for masking
+!-----------------------------------------------------------------------
+!
+      call ESMF_GridAddItem(models(Iocean)%grid3d,                      &
+                            staggerLoc=staggerLoc,                      &
+                            itemflag=ESMF_GRIDITEM_MASK,                &
+                            rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+                             line=__LINE__, file=FILENAME)) return
+!
+!-----------------------------------------------------------------------
+!     Set mask value for land and ocean 
+!-----------------------------------------------------------------------
+!
+      models(Iocean)%isLand = 0
+      models(Iocean)%isOcean = 1
+!
+!-----------------------------------------------------------------------
+!     Allocate items for grid area 
+!-----------------------------------------------------------------------
+!
+      call ESMF_GridAddItem(models(Iocean)%grid3d,                      &
+                            staggerLoc=staggerLoc,                      &
+                            itemflag=ESMF_GRIDITEM_AREA,                &
+                            rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,&
+                             line=__LINE__, file=FILENAME)) return
+!
+!-----------------------------------------------------------------------
+!     Get number of local DEs
+!-----------------------------------------------------------------------
+! 
+      call ESMF_GridGet(models(Iocean)%grid3d,                          &
+                        localDECount=localDECount,                      &
+                        rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+                             line=__LINE__, file=FILENAME)) return
+!
+!-----------------------------------------------------------------------
+!     Get pointers and set coordinates for the grid 
+!-----------------------------------------------------------------------
+! 
+      do j = 0, localDECount-1
+      call ESMF_GridGetCoord(models(Iocean)%grid3d,                     &
+                             localDE=j,                                 &
+                             staggerLoc=staggerLoc,                     &
+                             coordDim=1,                                &
+                             farrayPtr=ptrX,                            &
+                             rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+                             line=__LINE__, file=FILENAME)) return
+!
+      call ESMF_GridGetCoord(models(Iocean)%grid3d,                     &
+                             localDE=j,                                 &
+                             staggerLoc=staggerLoc,                     &
+                             coordDim=2,                                &
+                             farrayPtr=ptrY,                            &
+                             rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+                             line=__LINE__, file=FILENAME)) return
+!
+      call ESMF_GridGetCoord(models(Iocean)%grid3d,                     &
+                             localDE=j,                                 &
+                             staggerLoc=staggerLoc,                     &
+                             coordDim=3,                                &
+                             farrayPtr=ptrZ,                            &
+                             rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+                             line=__LINE__, file=FILENAME)) return
+!
+      call ESMF_GridGetItem (models(Iocean)%grid3d,                     &
+                             localDE=j,                                 &
+                             staggerLoc=staggerLoc,                     &
+                             itemflag=ESMF_GRIDITEM_MASK,               &
+                             farrayPtr=ptrM,                            &
+                             rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+                             line=__LINE__, file=FILENAME)) return
+!
+      call ESMF_GridGetItem (models(Iocean)%grid3d,                     &
+                             localDE=j,                                 &
+                             staggerLoc=staggerLoc,                     &
+                             itemflag=ESMF_GRIDITEM_AREA,               &
+                             farrayPtr=ptrA,                            &
+                             rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+                             line=__LINE__, file=FILENAME)) return
+!
+!-----------------------------------------------------------------------
+!     Debug: write size of pointers    
+!-----------------------------------------------------------------------
+!
+      name = GRIDDES(models(Iocean)%mesh(i)%gtype)
+!
+      if (debugLevel > 0) then
+        write(*,30) localPet, j, adjustl("PTR/OCN/GRD3D/"//name),       &
+                    lbound(ptrX, dim=1), ubound(ptrX, dim=1),           &
+                    lbound(ptrX, dim=2), ubound(ptrX, dim=2),           &
+                    lbound(ptrX, dim=3), ubound(ptrX, dim=3)
+      end if
+!
+!-----------------------------------------------------------------------
+!     Fill the pointers    
+!-----------------------------------------------------------------------
+!
+      if (models(Iocean)%mesh(i)%gtype == Idot) then
+        if (debugLevel > 0) then
+          write(*,30) localPet, j, adjustl("DAT/OCN/GRD/"//name),       &
+                      IstrU, IendR, JstrV, JendR, 1, kz
+        end if
+!
+        do kk = 1, kz 
+          do jj = JstrV, JendR
+            do ii = IstrU, IendR
+              ptrX(ii,jj,kk) = GRID(ng)%lonp(ii,jj)
+              ptrY(ii,jj,kk) = GRID(ng)%latp(ii,jj)
+              ptrZ(ii,jj,kk) = models(Iocean)%levs(kk)
+              ptrM(ii,jj,kk) = int(GRID(ng)%pmask(ii,jj))
+              ptrA(ii,jj,kk) = GRID(ng)%om_p(ii,jj)*GRID(ng)%on_p(ii,jj)
+            end do
+          end do
+        end do
+      else if (models(Iocean)%mesh(i)%gtype == Icross) then
+        if (debugLevel > 0) then
+          write(*,30) localPet, j, adjustl("DAT/OCN/GRD/"//name),       &
+                      IstrR, IendR, JstrR, JendR, 1, kz
+        end if
+!
+        do kk = 1, kz 
+          do jj = JstrR, JendR
+            do ii = IstrR, IendR
+              ptrX(ii,jj,kk) = GRID(ng)%lonr(ii,jj)
+              ptrY(ii,jj,kk) = GRID(ng)%latr(ii,jj)
+              ptrZ(ii,jj,kk) = models(Iocean)%levs(kk)
+              ptrM(ii,jj,kk) = int(GRID(ng)%rmask(ii,jj))
+              ptrA(ii,jj,kk) = GRID(ng)%om_r(ii,jj)*GRID(ng)%on_r(ii,jj)
+            end do
+          end do
+        end do
+      else if (models(Iocean)%mesh(i)%gtype == Iupoint) then
+        if (debugLevel > 0) then
+          write(*,30) localPet, j, adjustl("DAT/OCN/GRD/"//name),       &
+                      IstrU, IendU, JstrU, JendU, 1, kz
+        end if
+!
+        do kk = 1, kz 
+          do jj = JstrU, JendU
+            do ii = IstrU, IendU
+              ptrX(ii,jj,kk) = GRID(ng)%lonu(ii,jj)
+              ptrY(ii,jj,kk) = GRID(ng)%latu(ii,jj)
+              ptrZ(ii,jj,kk) = models(Iocean)%levs(kk)
+              ptrM(ii,jj,kk) = int(GRID(ng)%umask(ii,jj))
+              ptrA(ii,jj,kk) = GRID(ng)%om_u(ii,jj)*GRID(ng)%on_u(ii,jj)
+            end do
+          end do
+        end do
+      else if (models(Iocean)%mesh(i)%gtype == Ivpoint) then
+        if (debugLevel > 0) then
+          write(*,30) localPet, j, adjustl("DAT/OCN/GRD/"//name),       &
+                      IstrV, IendV, JstrV, JendV, 1, kz
+        end if
+!
+        do kk = 1, kz 
+          do jj = JstrV, JendV
+            do ii = IstrV, IendV
+              ptrX(ii,jj,kk) = GRID(ng)%lonv(ii,jj)
+              ptrY(ii,jj,kk) = GRID(ng)%latv(ii,jj)
+              ptrZ(ii,jj,kk) = models(Iocean)%levs(kk)
+              ptrM(ii,jj,kk) = int(GRID(ng)%vmask(ii,jj))
+              ptrA(ii,jj,kk) = GRID(ng)%om_v(ii,jj)*GRID(ng)%on_v(ii,jj)
+            end do
+          end do
+        end do
+      end if
+!
+!-----------------------------------------------------------------------
+!     Nullify pointers 
+!-----------------------------------------------------------------------
+!
+      if (associated(ptrX)) then
+        nullify(ptrX)
+      end if
+      if (associated(ptrY)) then
+        nullify(ptrY)
+      end if
+      if (associated(ptrZ)) then
+        nullify(ptrZ)
+      end if
+      if (associated(ptrM)) then
+        nullify(ptrM)
+      end if
+      if (associated(ptrA)) then
+        nullify(ptrA)
+      end if
+!
+!-----------------------------------------------------------------------
+!     Debug: write out component grid in VTK format 
+!-----------------------------------------------------------------------
+!
+      if (debugLevel > 1) then
+      call ESMF_GridWriteVTK(models(Iocean)%grid3d,                     &
+                         filename="ocean_"//                            &
+                         trim(GRIDDES(models(Iocean)%mesh(i)%gtype))//  &
+                         "point_3d",                                    &
+                         staggerLoc=staggerLoc,                         &
+                         rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,&
+                             line=__LINE__, file=FILENAME)) return
+      end if
+!
+      end do
+!
+      end do 
+!
+!-----------------------------------------------------------------------
+!     Format definition 
+!-----------------------------------------------------------------------
+!
+   30 format(" PET(",I3.3,") - DE(",I2.2,") - ", A20, " : ", 6I8)
+!
+      end subroutine OCN_SetGridArrays3d
+!
+      subroutine OCN_SetStates2d(gcomp, rc)
 !
 !-----------------------------------------------------------------------
 !     Used module declarations 
@@ -1419,7 +1888,7 @@
 !     Add field export state
 !-----------------------------------------------------------------------
 !
-      call NUOPC_StateRealizeField(exportState, field=field, rc=rc) 
+      call NUOPC_Realize(exportState, field=field, rc=rc) 
       if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
                              line=__LINE__, file=FILENAME)) return
       end do
@@ -1539,7 +2008,7 @@
 !     Add field import state
 !-----------------------------------------------------------------------
 !
-      call NUOPC_StateRealizeField(importState, field=field, rc=rc) 
+      call NUOPC_Realize(importState, field=field, rc=rc) 
       if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
                              line=__LINE__, file=FILENAME)) return
       end do
@@ -1550,7 +2019,350 @@
 !
       if (allocated(itemNameList)) deallocate(itemNameList)
 !
-      end subroutine OCN_SetStates
+      end subroutine OCN_SetStates2d
+!
+      subroutine OCN_SetStates3d(gcomp, rc)
+!
+!-----------------------------------------------------------------------
+!     Used module declarations 
+!-----------------------------------------------------------------------
+!
+      use mod_param, only : NtileI, NtileJ, BOUNDS, N, Lm, Mm, Ngrids
+!
+      implicit none
+!
+!-----------------------------------------------------------------------
+!     Imported variable declarations 
+!-----------------------------------------------------------------------
+!
+      type(ESMF_GridComp) :: gcomp
+      integer, intent(out) :: rc
+!
+!-----------------------------------------------------------------------
+!     Local variable declarations 
+!-----------------------------------------------------------------------
+!
+      integer :: i, j, k, ng, itemCount, localDECount,localPet, petCount
+      integer :: IstrR, IendR, JstrR, JendR
+      integer :: IstrU, IendU, JstrU, JendU     
+      integer :: IstrV, IendV, JstrV, JendV
+      integer :: staggerEdgeLWidth(2)
+      integer :: staggerEdgeUWidth(2)
+      integer :: TLW(2), TUW(2)
+      character(ESMF_MAXSTR) :: cname, msgString
+      character(ESMF_MAXSTR), allocatable :: itemNameList(:)
+      real*8, dimension(:,:,:), pointer :: ptr3d
+!
+      type(ESMF_VM) :: vm
+      type(ESMF_Field) :: field
+      type(ESMF_ArraySpec) :: arraySpec
+      type(ESMF_StaggerLoc) :: staggerLoc 
+      type(ESMF_State) :: importState, exportState
+!
+      rc = ESMF_SUCCESS
+!
+!-----------------------------------------------------------------------
+!     Get gridded component 
+!-----------------------------------------------------------------------
+!
+      call ESMF_GridCompGet(gcomp, importState=importState,             &
+                            exportState=exportState, vm=vm, rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+                             line=__LINE__, file=FILENAME)) return
+!
+      call ESMF_VMGet(vm, localPet=localPet, petCount=petCount, rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+                             line=__LINE__, file=FILENAME)) return
+      if (Ngrids > 1) then
+        write(msgString,'(A,I3)') trim(cname)//                         &
+              ': number of nested grid is', Ngrids,                     &
+              'coupled model only interactes with outermost one!'
+        call ESMF_LogWrite(trim(msgString), ESMF_LOGMSG_ERROR)
+        ng = 1
+      else
+        ng = Ngrids
+      end if
+!
+!-----------------------------------------------------------------------
+!     Get limits of the arrays (based on PET)
+!-----------------------------------------------------------------------
+!
+      IstrR = BOUNDS(ng)%IstrR(localPet)
+      IendR = BOUNDS(ng)%IendR(localPet)
+      JstrR = BOUNDS(ng)%JstrR(localPet)
+      JendR = BOUNDS(ng)%JendR(localPet)
+!
+      IstrU = BOUNDS(ng)%Istr(localPet)
+      IendU = BOUNDS(ng)%IendR(localPet)
+      JstrU = BOUNDS(ng)%JstrR(localPet)
+      JendU = BOUNDS(ng)%JendR(localPet)
+!
+      IstrV = BOUNDS(ng)%IstrR(localPet)
+      IendV = BOUNDS(ng)%IendR(localPet)
+      JstrV = BOUNDS(ng)%Jstr(localPet)
+      JendV = BOUNDS(ng)%JendR(localPet)
+!
+      TLW(1)=BOUNDS(ng)%Istr(localPet)-BOUNDS(ng)%LBi(localPet)
+      TLW(2)=BOUNDS(ng)%Jstr(localPet)-BOUNDS(ng)%LBj(localPet)
+      TUW(1)=BOUNDS(ng)%UBi(localPet)-BOUNDS(ng)%Iend(localPet)
+      TUW(2)=BOUNDS(ng)%UBj(localPet)-BOUNDS(ng)%Jend(localPet) 
+!
+!-----------------------------------------------------------------------
+!     Set array descriptor
+!-----------------------------------------------------------------------
+!
+      call ESMF_ArraySpecSet(arraySpec, typekind=ESMF_TYPEKIND_R8,      &
+                             rank=3, rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+                             line=__LINE__, file=FILENAME)) return
+!
+!-----------------------------------------------------------------------
+!     Get number of local DEs
+!-----------------------------------------------------------------------
+! 
+      call ESMF_GridGet(models(Iocean)%grid3d,                          &
+                        localDECount=localDECount,                      &
+                        rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+                             line=__LINE__, file=FILENAME)) return
+!
+!-----------------------------------------------------------------------
+!     Get list of export fields 
+!-----------------------------------------------------------------------
+!
+      call ESMF_StateGet(exportState, itemCount=itemCount, rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+                             line=__LINE__, file=FILENAME)) return
+!
+      if (.not. allocated(itemNameList)) then
+        allocate(itemNameList(itemCount))
+      end if
+      call ESMF_StateGet(exportState, itemNameList=itemNameList, rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+                             line=__LINE__, file=FILENAME)) return
+!
+!-----------------------------------------------------------------------
+!     Create export fields 
+!-----------------------------------------------------------------------
+!
+      do i = 1, itemCount
+      k = get_varid(models(Iocean)%exportField, trim(itemNameList(i)))
+!
+!-----------------------------------------------------------------------
+!     Check rank of the export field 
+!-----------------------------------------------------------------------
+!
+      if (models(Iocean)%exportField(k)%rank .eq. 3) then
+!
+!-----------------------------------------------------------------------
+!     Set staggering type 
+!-----------------------------------------------------------------------
+!
+      if (models(Iocean)%exportField(k)%gtype == Iupoint) then
+        staggerLoc = ESMF_STAGGERLOC_EDGE1
+        staggerEdgeLWidth = (/0,1/)
+        staggerEdgeUWidth = (/1,1/)
+      else if (models(Iocean)%exportField(k)%gtype == Ivpoint) then
+        staggerLoc = ESMF_STAGGERLOC_EDGE2
+        staggerEdgeLWidth = (/1,0/)
+        staggerEdgeUWidth = (/1,1/)
+      else if (models(Iocean)%exportField(k)%gtype == Icross) then
+        staggerLoc = ESMF_STAGGERLOC_CENTER
+        staggerEdgeLWidth = (/1,1/)
+        staggerEdgeUWidth = (/1,1/)
+      else if (models(Iocean)%exportField(k)%gtype == Idot) then
+        staggerLoc = ESMF_STAGGERLOC_CORNER
+        staggerEdgeLWidth = (/0,0/)
+        staggerEdgeUWidth = (/1,1/)
+      end if
+!
+!-----------------------------------------------------------------------
+!     Create field 
+!-----------------------------------------------------------------------
+!
+      field = ESMF_FieldCreate(models(Iocean)%grid3d,                   &
+                               arraySpec,                               &
+                               staggerloc=staggerLoc,                   &
+                               name=trim(itemNameList(i)),              &
+                               rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+                             line=__LINE__, file=FILENAME)) return
+!
+!-----------------------------------------------------------------------
+!     Put data into state 
+!-----------------------------------------------------------------------
+! 
+      do j = 0, localDECount-1
+!
+!-----------------------------------------------------------------------
+!     Get pointer from field 
+!-----------------------------------------------------------------------
+!
+      call ESMF_FieldGet(field, localDe=j, farrayPtr=ptr3d, rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+                             line=__LINE__, file=FILENAME)) return
+!
+!-----------------------------------------------------------------------
+!     Initialize pointer 
+!-----------------------------------------------------------------------
+!
+      ptr3d = MISSING_R8
+!
+!-----------------------------------------------------------------------
+!     Nullify pointer to make sure that it does not point on a random 
+!     part in the memory 
+!-----------------------------------------------------------------------
+!
+      if (associated(ptr3d)) then
+        nullify(ptr3d)
+      end if
+!
+      end do
+!
+!-----------------------------------------------------------------------
+!     Add field export state
+!-----------------------------------------------------------------------
+!
+      call NUOPC_Realize(exportState, field=field, rc=rc) 
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+                             line=__LINE__, file=FILENAME)) return
+!
+      end if   
+!
+      end do
+!
+!-----------------------------------------------------------------------
+!     Deallocate arrays    
+!-----------------------------------------------------------------------
+!
+      if (allocated(itemNameList)) deallocate(itemNameList)
+!
+!-----------------------------------------------------------------------
+!     Get list of import fields 
+!-----------------------------------------------------------------------
+!
+     call ESMF_StateGet(importState, itemCount=itemCount, rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+                             line=__LINE__, file=FILENAME)) return
+!
+      if (.not. allocated(itemNameList)) then
+        allocate(itemNameList(itemCount))
+      end if
+      call ESMF_StateGet(importState, itemNameList=itemNameList, rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+                             line=__LINE__, file=FILENAME)) return
+!
+!-----------------------------------------------------------------------
+!     Create import fields 
+!-----------------------------------------------------------------------
+!
+      do i = 1, itemCount
+      k = get_varid(models(Iocean)%importField, trim(itemNameList(i)))
+!
+!-----------------------------------------------------------------------
+!     Check rank of the import field 
+!-----------------------------------------------------------------------
+!
+      if (models(Iocean)%importField(k)%rank .eq. 3) then
+!
+!-----------------------------------------------------------------------
+!     Set staggering type 
+!-----------------------------------------------------------------------
+!
+      if (models(Iocean)%importField(k)%gtype == Iupoint) then
+        staggerLoc = ESMF_STAGGERLOC_EDGE1
+        staggerEdgeLWidth = (/0,1/)
+        staggerEdgeUWidth = (/1,1/)
+      else if (models(Iocean)%importField(k)%gtype == Ivpoint) then
+        staggerLoc = ESMF_STAGGERLOC_EDGE2
+        staggerEdgeLWidth = (/1,0/)
+        staggerEdgeUWidth = (/1,1/)
+      else if (models(Iocean)%importField(k)%gtype == Icross) then
+        staggerLoc = ESMF_STAGGERLOC_CENTER
+        staggerEdgeLWidth = (/1,1/)
+        staggerEdgeUWidth = (/1,1/)
+      else if (models(Iocean)%importField(k)%gtype == Idot) then
+        staggerLoc = ESMF_STAGGERLOC_CORNER
+        staggerEdgeLWidth = (/0,0/)
+        staggerEdgeUWidth = (/1,1/)
+      end if
+!
+!-----------------------------------------------------------------------
+!     Create field
+!-----------------------------------------------------------------------
+!
+      field = ESMF_FieldCreate(models(Iocean)%grid3d,                   &
+                               arraySpec,                               &
+                               totalLWidth=TLW,                         &
+                               totalUWidth=TUW,                         &
+                               staggerloc=staggerLoc,                   &
+                               indexflag=ESMF_INDEX_GLOBAL,             &
+                               name=trim(itemNameList(i)),              &
+                               rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+                             line=__LINE__, file=FILENAME)) return
+!
+!-----------------------------------------------------------------------
+!     Store routehandle to exchage halo region data 
+!-----------------------------------------------------------------------
+!
+      if (models(Iriver)%modActive) then
+      call ESMF_FieldHaloStore(field,                                   &
+              routehandle=models(Iocean)%importField(k)%rhandle, rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+                             line=__LINE__, file=FILENAME)) return
+      end if
+!
+!-----------------------------------------------------------------------
+!     Put data into state 
+!-----------------------------------------------------------------------
+! 
+      do j = 0, localDECount-1
+!
+!-----------------------------------------------------------------------
+!     Get pointer from field 
+!-----------------------------------------------------------------------
+!
+      call ESMF_FieldGet(field, localDe=j, farrayPtr=ptr3d, rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+                             line=__LINE__, file=FILENAME)) return
+!
+!-----------------------------------------------------------------------
+!     Initialize pointer 
+!-----------------------------------------------------------------------
+!
+      ptr3d = MISSING_R8
+!
+!-----------------------------------------------------------------------
+!     Nullify pointer to make sure that it does not point on a random 
+!     part in the memory 
+!-----------------------------------------------------------------------
+!
+      if (associated(ptr3d)) then
+        nullify(ptr3d)
+      end if
+!
+      end do
+!
+!-----------------------------------------------------------------------
+!     Add field import state
+!-----------------------------------------------------------------------
+!
+      call NUOPC_Realize(importState, field=field, rc=rc) 
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+                             line=__LINE__, file=FILENAME)) return
+!
+      end if
+! 
+      end do
+!
+!-----------------------------------------------------------------------
+!     Deallocate arrays    
+!-----------------------------------------------------------------------
+!
+      if (allocated(itemNameList)) deallocate(itemNameList)
+!
+      end subroutine OCN_SetStates3d      
 !
       subroutine OCN_ModelAdvance(gcomp, rc)
 !
@@ -2072,12 +2884,15 @@
       use mod_param, only : BOUNDS, N, Ngrids
       use mod_ocean, only : OCEAN
       use mod_grid , only : GRID
-      use mod_scalars, only : itemp
-      use mod_stepping, only : nstp
+      use mod_scalars, only : itemp, isalt
+      use mod_stepping, only : nstp!, nnew, nrhs
 #ifdef OCNICE
       use mod_ice, only : ICE
       use mod_stepping, only : linew
 #endif
+!      use mod_parallel, only: MyRank
+!      use mod_coupling, only: COUPLING
+!      use set_depth_mod, only: set_depth_tile
 !
       implicit none
 !
@@ -2092,13 +2907,21 @@
 !     Local variable declarations 
 !-----------------------------------------------------------------------
 !
-      integer :: ng, i, j, ii, jj, iunit, iyear, iday, imonth, ihour
+      integer :: ng, i, j, k, ii, jj, kk, kz
+      integer :: iunit, iyear, iday, imonth, ihour
       integer :: petCount, localPet, itemCount, localDECount
       integer :: IstrR, IendR, JstrR, JendR
+      integer :: IminS, ImaxS, JminS, JmaxS
       integer :: LBi, UBi, LBj, UBj
       character(ESMF_MAXSTR) :: cname, msgString, ofile
       character(ESMF_MAXSTR), allocatable :: itemNameList(:)
-      real(ESMF_KIND_R8), pointer :: ptr(:,:)
+      real(ESMF_KIND_R8), pointer :: ptr2d(:,:)
+      real(ESMF_KIND_R8), pointer :: ptr3d(:,:,:)
+      real(ESMF_KIND_R8), allocatable :: Hz(:,:,:)
+      real(ESMF_KIND_R8), allocatable :: z_r(:,:,:)
+      real(ESMF_KIND_R8), allocatable :: z_w(:,:,:)
+      real(ESMF_KIND_R8), allocatable :: zvar(:,:,:)
+      real(ESMF_KIND_R8), allocatable :: mask3d(:,:)
 !
       type(ESMF_VM) :: vm
       type(ESMF_Clock) :: clock
@@ -2162,15 +2985,6 @@
       UBj = BOUNDS(ng)%UBj(localPet)
 !
 !-----------------------------------------------------------------------
-!     Get number of local DEs
-!-----------------------------------------------------------------------
-! 
-      call ESMF_GridGet(models(Iocean)%grid,                            &
-                        localDECount=localDECount, rc=rc)
-      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
-                             line=__LINE__, file=FILENAME)) return
-!
-!-----------------------------------------------------------------------
 !     Get list of export fields 
 !-----------------------------------------------------------------------
 !
@@ -2195,6 +3009,23 @@
 !
       do i = 1, itemCount
 !
+      k = get_varid(models(Iocean)%exportField, trim(itemNameList(i)))
+!
+!-----------------------------------------------------------------------
+!     Check rank of the export field 
+!-----------------------------------------------------------------------
+!
+      if (models(Iocean)%exportField(k)%rank .eq. 2) then
+!
+!-----------------------------------------------------------------------
+!     Get number of local DEs
+!-----------------------------------------------------------------------
+! 
+      call ESMF_GridGet(models(Iocean)%grid,                            &
+                        localDECount=localDECount, rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+                             line=__LINE__, file=FILENAME)) return
+!
 !-----------------------------------------------------------------------
 !     Get export field 
 !-----------------------------------------------------------------------
@@ -2210,7 +3041,7 @@
 !     Get pointer 
 !-----------------------------------------------------------------------
 !
-      call ESMF_FieldGet(field, localDE=j, farrayPtr=ptr, rc=rc)
+      call ESMF_FieldGet(field, localDE=j, farrayPtr=ptr2d, rc=rc)
       if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
                              line=__LINE__, file=FILENAME)) return
 !
@@ -2218,24 +3049,54 @@
 !     Set initial value to missing 
 !-----------------------------------------------------------------------
 !
-      ptr = MISSING_R8
+      ptr2d = MISSING_R8
 !
 !-----------------------------------------------------------------------
 !     Put data to export field 
 !-----------------------------------------------------------------------
 !
       select case (trim(adjustl(itemNameList(i))))
+      case ('mask2d')
+        do jj = JstrR, JendR
+          do ii= IstrR, IendR
+            ptr2d(ii,jj) = GRID(ng)%rmask(ii,jj)
+          end do
+        end do
+      case ('depth')
+        do jj = JstrR, JendR
+          do ii= IstrR, IendR
+            ptr2d(ii,jj) = GRID(ng)%h(ii,jj)
+          end do
+        end do
       case ('sst')
         do jj = JstrR, JendR
           do ii= IstrR, IendR
-            ptr(ii,jj) = OCEAN(ng)%t(ii,jj,N(ng),nstp(ng),itemp)
+            ptr2d(ii,jj) = OCEAN(ng)%t(ii,jj,N(ng),nstp(ng),itemp)
+          end do
+        end do
+      case ('ssh')
+        do jj = JstrR, JendR
+          do ii= IstrR, IendR
+            ptr2d(ii,jj) = OCEAN(ng)%zeta(ii,jj,nstp(ng))
+          end do
+        end do
+      case ('usfc')
+        do jj = JstrR, JendR
+          do ii= IstrR, IendR
+            ptr2d(ii,jj) = OCEAN(ng)%u(ii,jj,N(ng),nstp(ng))
+          end do
+        end do
+      case ('vsfc')
+        do jj = JstrR, JendR
+          do ii= IstrR, IendR
+            ptr2d(ii,jj) = OCEAN(ng)%v(ii,jj,N(ng),nstp(ng))
           end do
         end do
 #ifdef OCNICE
       case ('sit')
         do jj = JstrR, JendR
           do ii = IstrR, IendR
-            ptr(ii,jj) = ICE(ng)%ai(ii,jj,linew(ng))
+            ptr2d(ii,jj) = ICE(ng)%ai(ii,jj,linew(ng))
           end do
         end do
 #endif
@@ -2247,9 +3108,9 @@
             if (GRID(ng)%rmask(ii,jj) > 0.0d0) then
               ! if wet-dry mask differs from static mask
               if (GRID(ng)%rmask(ii,jj) /= GRID(ng)%rmask_wet(ii,jj)) then
-                ptr(ii,jj) = GRID(ng)%rmask_wet(ii,jj)
+                ptr2d(ii,jj) = GRID(ng)%rmask_wet(ii,jj)
               else
-                ptr(ii,jj) = GRID(ng)%rmask(ii,jj)
+                ptr2d(ii,jj) = GRID(ng)%rmask(ii,jj)
               end if
             end if
           end do
@@ -2266,7 +3127,7 @@
         write(ofile,90) 'ocn_export', trim(itemNameList(i)),            &
                         iyear, imonth, iday, ihour, localPet, j
         open(unit=iunit, file=trim(ofile)//'.txt') 
-        call print_matrix(ptr, IstrR, IendR, JstrR, JendR, 1, 1,        &
+        call print_matrix(ptr2d, IstrR, IendR, JstrR, JendR, 1, 1,      &
                           localPet, iunit, "PTR/OCN/EXP")
         close(unit=iunit)
       end if         
@@ -2276,11 +3137,174 @@
 !     part in the memory 
 !-----------------------------------------------------------------------
 !
-      if (associated(ptr)) then
-        nullify(ptr)
+      if (associated(ptr2d)) then
+        nullify(ptr2d)
       end if
 !
       end do
+!
+      else if (models(Iocean)%exportField(k)%rank .eq. 3) then
+!
+!-----------------------------------------------------------------------
+!     Get number of local DEs
+!-----------------------------------------------------------------------
+! 
+      call ESMF_GridGet(models(Iocean)%grid3d,                          &
+                        localDECount=localDECount, rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+                             line=__LINE__, file=FILENAME)) return
+!
+!-----------------------------------------------------------------------
+!     Get field from export state 
+!-----------------------------------------------------------------------
+!
+      call ESMF_StateGet(exportState, trim(itemNameList(i)),            &
+                         field, rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+                             line=__LINE__, file=FILENAME)) return
+!
+!-----------------------------------------------------------------------
+!     Loop over decomposition elements (DEs) 
+!-----------------------------------------------------------------------
+!
+      do j = 0, localDECount-1
+!
+!-----------------------------------------------------------------------
+!     Get pointer from field 
+!-----------------------------------------------------------------------
+!
+      call ESMF_FieldGet(field, localDE=j, farrayPtr=ptr3d, rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+                             line=__LINE__, file=FILENAME)) return
+!
+!-----------------------------------------------------------------------
+!     Set initial value to missing 
+!-----------------------------------------------------------------------
+!
+      ptr3d = MISSING_R8
+!
+!-----------------------------------------------------------------------
+!     Calculate depth of s-coordinates
+!     IminS, ImaxS, JminS, JmaxS definitions are from Include/tile.h
+!-----------------------------------------------------------------------
+!
+!      if (.not. allocated(Hz)) then
+!        allocate(Hz(LBi:UBi,LBj:UBj,N(ng)))
+!        allocate(z_r(LBi:UBi,LBj:UBj,N(ng)))
+!        allocate(z_w(LBi:UBi,LBj:UBj,0:N(ng)))
+!      end if
+!      Hz = ZERO_R8
+!      z_r = ZERO_R8
+!      z_w = ZERO_R8
+!
+!      IminS = BOUNDS(ng)%Istr(localPet)-3
+!      ImaxS = BOUNDS(ng)%Iend(localPet)+3
+!      JminS = BOUNDS(ng)%Jstr(localPet)-3
+!      JmaxS = BOUNDS(ng)%Jend(localPet)+3
+!
+!      call set_depth_tile(ng, localPet, LBi, UBi, LBj, UBj,             &
+!                          IminS, ImaxS, JminS, JmaxS,                   &
+!                          nstp(ng), nnew(ng), GRID(ng)%h,               &
+!                          COUPLING(ng)%Zt_avg1, Hz, z_r, z_w)
+!
+!-----------------------------------------------------------------------
+!     Perform vertical interpolation from s-coordinates to depth 
+!-----------------------------------------------------------------------
+!
+      kz = models(Iocean)%nLevs
+!
+      if (.not. allocated(zvar)) then
+        allocate(zvar(IstrR:IendR,JstrR:JendR,kz))
+      end if
+      zvar = ZERO_R8
+!
+      select case (trim(adjustl(itemNameList(i))))
+      case ('rho')
+        call vInterpolation(ng, OCEAN(ng)%rho(IstrR:IendR,JstrR:JendR,1:N(ng)), &
+                            IstrR, IendR, JstrR, JendR, 1, N(ng),               &
+                            GRID(ng)%z_r(IstrR:IendR,JstrR:JendR,1:N(ng)),      &
+                            zvar(IstrR:IendR,JstrR:JendR,1:kz), kz, rc)
+        if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,  &
+                               line=__LINE__, file=FILENAME)) return
+      case ('pden')
+        call vInterpolation(ng, OCEAN(ng)%pden(IstrR:IendR,JstrR:JendR,1:N(ng)), &
+                            IstrR, IendR, JstrR, JendR, 1, N(ng),               &
+                            GRID(ng)%z_r(IstrR:IendR,JstrR:JendR,1:N(ng)),      &
+                            zvar(IstrR:IendR,JstrR:JendR,1:kz), kz, rc)
+        if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,  &
+                               line=__LINE__, file=FILENAME)) return
+      case ('temp')
+        call vInterpolation(ng, OCEAN(ng)%t(IstrR:IendR,JstrR:JendR,1:N(ng),nstp(ng),itemp), &
+                            IstrR, IendR, JstrR, JendR, 1, N(ng),               &
+                            GRID(ng)%z_r(IstrR:IendR,JstrR:JendR,1:N(ng)),      &
+                            zvar(IstrR:IendR,JstrR:JendR,1:kz), kz, rc)
+        if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,  &
+                               line=__LINE__, file=FILENAME)) return
+      case ('salt')
+        call vInterpolation(ng, OCEAN(ng)%t(IstrR:IendR,JstrR:JendR,1:N(ng),nstp(ng),isalt), &
+                            IstrR, IendR, JstrR, JendR, 1, N(ng),&
+                            GRID(ng)%z_r(IstrR:IendR,JstrR:JendR,1:N(ng)),&
+                            zvar(IstrR:IendR,JstrR:JendR,1:kz), kz, rc)
+        if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,&
+                               line=__LINE__, file=FILENAME)) return
+      case ('u')
+        call vInterpolation(ng, OCEAN(ng)%u(IstrR:IendR,JstrR:JendR,1:N(ng),nstp(ng)), &
+                            IstrR, IendR, JstrR, JendR, 1, N(ng),&
+                            GRID(ng)%z_r(IstrR:IendR,JstrR:JendR,1:N(ng)),&
+                            zvar(IstrR:IendR,JstrR:JendR,1:kz), kz, rc)
+        if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,&
+                               line=__LINE__, file=FILENAME)) return
+      case ('v')
+        call vInterpolation(ng, OCEAN(ng)%v(IstrR:IendR,JstrR:JendR,1:N(ng),nstp(ng)), &
+                            IstrR, IendR, JstrR, JendR, 1, N(ng),&
+                            GRID(ng)%z_r(IstrR:IendR,JstrR:JendR,1:N(ng)),&
+                            zvar(IstrR:IendR,JstrR:JendR,1:kz), kz, rc)
+        if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,&
+                               line=__LINE__, file=FILENAME)) return
+      case ('w')
+        call vInterpolation(ng, OCEAN(ng)%wvel(IstrR:IendR,JstrR:JendR,0:N(ng)), &
+                            IstrR, IendR, JstrR, JendR, 0, N(ng),&
+                            GRID(ng)%z_w(IstrR:IendR,JstrR:JendR,0:N(ng)),&
+                            zvar(IstrR:IendR,JstrR:JendR,1:kz), kz, rc)
+        if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,&
+                               line=__LINE__, file=FILENAME)) return
+      case ('mask3d')
+        if (.not. allocated(mask3d)) then
+          allocate(mask3d(IstrR:IendR,JstrR:JendR))
+        end if
+!
+        do kk = 1, kz
+          mask3d = ZERO_R8
+          where(GRID(ng)%rmask(IstrR:IendR,JstrR:JendR) > 0.5d0) mask3d = 1
+          where(-GRID(ng)%h(IstrR:IendR,JstrR:JendR) > models(iocean)%levs(kk)) mask3d = 0
+          zvar(IstrR:IendR,JstrR:JendR,kk) = mask3d
+        end do 
+      end select
+!
+!-----------------------------------------------------------------------
+!     Put data to export field 
+!-----------------------------------------------------------------------
+!
+      do kk = 1, kz
+        do jj = JstrR, JendR
+          do ii= IstrR, IendR
+            ptr3d(ii,jj,kk) = zvar(ii,jj,kk) 
+          end do
+        end do
+      end do
+!
+!-----------------------------------------------------------------------
+!     Nullify pointer to make sure that it does not point on a random 
+!     part in the memory 
+!-----------------------------------------------------------------------
+!
+      if (associated(ptr3d)) then
+        nullify(ptr3d)
+      end if
+!
+      end do
+!
+      end if
 !
 !-----------------------------------------------------------------------
 !     Debug: write field in netCDF format    
@@ -2302,6 +3326,7 @@
 !
       if (allocated(itemNameList)) deallocate(itemNameList)
       if (allocated(itemTypeList)) deallocate(itemTypeList)
+      if (allocated(zvar)) deallocate(zvar)
 !
 !-----------------------------------------------------------------------
 !     Format definition 
@@ -2373,13 +3398,13 @@
 !     Fill array with river discharge data
 !-----------------------------------------------------------------------
 !
-      ! reinitialize temporary river discharge array
-      rdata(ng)%R2dis(LBi:UBi,LBj:UBj) = ZERO_R8
-!
       ! get number of rivers
       nr = size(rivers, dim=1)
 !
       do ng = 1, Ngrids
+        ! reinitialize temporary river discharge array
+        rdata(ng)%R2dis(LBi:UBi,LBj:UBj) = ZERO_R8
+        
         k = 0
         do r = 1, nr
           if (rivers(r)%isActive > 0) then
@@ -2535,5 +3560,70 @@
       findPet = sendData(1)
 !
       end function findPet
+!
+      subroutine vInterpolation(ng, ivar, LBi, UBi, LBj, UBj, LBk, UBk, &
+                                z_r, ovar, kz, rc)
+      implicit none
+!
+!-----------------------------------------------------------------------
+!     Imported variable declarations 
+!-----------------------------------------------------------------------
+!
+      integer, intent(in) :: ng, LBi, UBi, LBj, UBj, LBk, UBk, kz 
+      real*8, intent(in) :: ivar(LBi:UBi,LBj:UBj,LBk:UBk)
+      real*8, intent(in) :: z_r(LBi:UBi,LBj:UBj,LBk:UBk)
+      real*8, intent(inout) :: ovar(LBi:UBi,LBj:UBj,1:kz)
+      integer, intent(out) :: rc
+!
+!-----------------------------------------------------------------------
+!     Local variable declarations 
+!-----------------------------------------------------------------------
+!      
+      integer :: ii, jj, kk, ll
+      real*8 :: frc1, frc2
+!
+      rc = ESMF_SUCCESS
+!
+!      do kk = LBk, UBk
+!        ii = LBi+(UBi-LBi)/2
+!        jj = LBj+(UBj-LBj)/2
+!        write(*, fmt="(3I5, 2F15.6)") ii, jj, kk, z_r(ii,jj,kk), ivar(ii,jj,kk)
+!      end do
+
+      do jj = LBj, UBj
+        do ii = LBi, UBi
+          do kk = 1, kz
+            if (models(iocean)%levs(kk) < z_r(ii,jj,1)) then
+              ovar(ii,jj,kk) = ivar(ii,jj,1) 
+            else if (models(iocean)%levs(kk) > z_r(ii,jj,UBk)) then
+              ovar(ii,jj,kk) = ivar(ii,jj,UBk)
+            else
+              do ll = LBk, UBk-1
+                if (models(iocean)%levs(kk) < z_r(ii,jj,ll+1) .and.     &
+                    models(iocean)%levs(kk) >= z_r(ii,jj,ll)) then
+                  frc1 = (models(iocean)%levs(kk)-z_r(ii,jj,ll))/       &
+                         (z_r(ii,jj,ll+1)-z_r(ii,jj,ll))
+                  frc2 = 1.0-frc1
+                  ovar(ii,jj,kk) = frc1*ivar(ii,jj,ll)+                 &
+                                   frc2*ivar(ii,jj,ll+1)
+                  exit 
+                end if  
+              end do
+            end if
+          end do
+        end do
+      end do 
+!
+!      do kk = 1, kz
+!        ii = LBi+(UBi-LBi)/2
+!        jj = LBj+(UBj-LBj)/2
+!        write(*, fmt="(3I5, 2F15.6)") ii, jj, kk, models(iocean)%levs(kk), ovar(ii,jj,kk)
+!      end do
+!     
+      ! apply masking
+      !do kk = 1, kz
+      !end do 
+!
+      end subroutine vInterpolation
 !
       end module mod_esmf_ocn

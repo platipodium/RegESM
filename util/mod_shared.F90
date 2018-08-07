@@ -1,24 +1,8 @@
-!-----------------------------------------------------------------------
-!
-!     This file is part of ITU RegESM.
-!
-!     ITU RegESM is free software: you can redistribute it and/or
-!     modify
-!     it under the terms of the GNU General Public License as published
-!     by
-!     the Free Software Foundation, either version 3 of the License, or
-!     (at your option) any later version.
-!
-!     ITU RegESM is distributed in the hope that it will be useful,
-!     but WITHOUT ANY WARRANTY; without even the implied warranty of
-!     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-!     GNU General Public License for more details.
-!
-!     You should have received a copy of the GNU General Public License
-!     along with ITU RegESM.  If not, see
-!     <http://www.gnu.org/licenses/>.
-!
-!-----------------------------------------------------------------------
+!=======================================================================
+! Regional Earth System Model (RegESM)
+! Copyright (c) 2013-2017 Ufuk Turuncoglu
+! Licensed under the MIT License.
+!=======================================================================
 #define FILENAME "util/mod_shared.F90" 
 !
 !-----------------------------------------------------------------------
@@ -489,5 +473,229 @@
       end do
 !
       end subroutine map_rivers
+!
+      subroutine print_timestamp(field, ctime, localPet, str, rc)
+      implicit none
+!
+!-----------------------------------------------------------------------
+!     Imported variable declarations 
+!-----------------------------------------------------------------------
+!
+      type(ESMF_Field), intent(in) :: field
+      type(ESMF_Time),  intent(in) :: ctime
+      integer, intent(in) :: localPet
+      character(*), intent(in) :: str
+      integer, intent(inout) :: rc
+!
+!-----------------------------------------------------------------------
+!     Local variable declarations 
+!-----------------------------------------------------------------------
+!
+      integer :: vl1(9), vl2(9)
+      character(ESMF_MAXSTR) :: fname, str1, str2
+!
+      rc = ESMF_SUCCESS
+!
+!-----------------------------------------------------------------------
+!     Get field name 
+!-----------------------------------------------------------------------
+!
+      call ESMF_FieldGet(field, name=fname, rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+          line=__LINE__, file=FILENAME)) return
+!
+!-----------------------------------------------------------------------
+!     Get field TimeStamp attribute 
+!-----------------------------------------------------------------------
+!
+      call ESMF_AttributeGet(field, name="TimeStamp",                   &
+                             valueList=vl1, convention="NUOPC",         &
+                             purpose="Instance", rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+          line=__LINE__, file=FILENAME)) return
+!
+      write(str1,10) vl1(1), vl1(2), vl1(3), vl1(4), vl1(5), vl1(6)
+!
+!-----------------------------------------------------------------------
+!     Get current time 
+!-----------------------------------------------------------------------
+!
+      call ESMF_TimeGet(ctime, yy=vl2(1), mm=vl2(2), dd=vl2(3),         &
+                        h=vl2(4), m=vl2(5), s=vl2(6), rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+          line=__LINE__, file=FILENAME)) return
+!
+      write(str2,10) vl2(1), vl2(2), vl2(3), vl2(4), vl2(5), vl2(6)
+!
+!-----------------------------------------------------------------------
+!     Print out
+!-----------------------------------------------------------------------
+!
+      if (localPet == 0) then
+        if (trim(str1) /= trim(str2)) then
+          write(*,20) trim(str), trim(str1), trim(str2),                &
+                      to_upper(trim(fname))
+        else
+          write(*,30) trim(str), trim(str1), to_upper(trim(fname))
+        end if
+      end if
+!
+!-----------------------------------------------------------------------
+!     Format definition 
+!-----------------------------------------------------------------------
+!
+10    format(I4,'-',I2.2,'-',I2.2,'_',I2.2,':',I2.2,':',I2.2)
+20    format(A,': TIMESTAMP = ',A,' /= ',A,' FOR ',A,' ERROR !!!')
+30    format(A,': TIMESTAMP = ',A,' FOR ',A)
+!
+      end subroutine print_timestamp
+!
+      pure function to_upper (str) result (string)
+      implicit none
+!
+!-----------------------------------------------------------------------
+!     Imported variable declarations
+!-----------------------------------------------------------------------
+!
+      character(*), intent(in) :: str
+      character(len(str)) :: string
+!
+!-----------------------------------------------------------------------
+!     Local variable declarations
+!-----------------------------------------------------------------------
+!
+      integer :: ic, i
+      character(26), parameter :: cap = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+      character(26), parameter :: low = 'abcdefghijklmnopqrstuvwxyz'
+!
+!-----------------------------------------------------------------------
+!     capitalize each letter if it is lowecase
+!-----------------------------------------------------------------------
+!
+      string = str
+      do i = 1, len_trim(str)
+        ic = index(low, str(i:i))
+        if (ic > 0) string(i:i) = cap(ic:ic)
+      end do
+!
+      end function to_upper
+!
+      pure function to_lower (str) result (string)
+      implicit none
+!
+!-----------------------------------------------------------------------
+!     Imported variable declarations
+!-----------------------------------------------------------------------
+!
+      character(*), intent(in) :: str
+      character(len(str)) :: string
+!
+!-----------------------------------------------------------------------
+!     Local variable declarations
+!-----------------------------------------------------------------------
+!
+      integer :: ic, i
+      character(26), parameter :: cap = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+      character(26), parameter :: low = 'abcdefghijklmnopqrstuvwxyz'
+!
+!-----------------------------------------------------------------------
+!     capitalize each letter if it is lowecase
+!-----------------------------------------------------------------------
+!
+      string = str
+      do i = 1, len_trim(str)
+        ic = index(cap, str(i:i))
+        if (ic > 0) string(i:i) = low(ic:ic)
+      end do
+!
+      end function to_lower
+!
+      function replace_str (str, text, repl) result (string)
+      implicit none
+!
+!-----------------------------------------------------------------------
+!     Imported variable declarations
+!-----------------------------------------------------------------------
+!
+      character(*), intent(in) :: str
+      character(*), intent(in) :: text
+      character(*), intent(in) :: repl
+      character(len(str)-len(text)+len(repl)) :: string
+!
+!-----------------------------------------------------------------------
+!     Local variable declarations
+!-----------------------------------------------------------------------
+!
+      integer :: ind, s1, s2
+!
+!-----------------------------------------------------------------------
+!     Replace text with replacement in the given string
+!-----------------------------------------------------------------------
+!
+      string = str
+      s1 = len(text)
+      s2 = len(repl)
+      do
+        ind = index(string, text(1:s1))
+        if (ind == 0) then
+          exit
+        else
+          string = string(1:ind-1)//repl(1:s2)//string(ind+s1:)
+        end if 
+      end do
+! 
+      end function replace_str
+!
+      function auto_tile (ain) result (aout)
+      implicit none
+!
+!-----------------------------------------------------------------------
+!     Imported variable declarations
+!-----------------------------------------------------------------------
+!
+      integer, intent(in) :: ain
+      integer :: aout(2)
+!
+!-----------------------------------------------------------------------
+!     Local variable declarations
+!-----------------------------------------------------------------------
+!
+      integer :: i, j, atmp, divisor
+      integer :: arr(100)
+!
+      atmp = ain
+!
+      i = 0
+      do
+        if (mod(atmp,2) /= 0 .or. atmp == 1) exit
+        i = i+1
+        atmp = atmp/2
+        arr(i) = 2 
+      end do
+!
+      divisor = 3
+      do
+        if (divisor > atmp) exit
+        do
+          if (mod(atmp,divisor) /= 0 .or. atmp == 1) exit
+          i = i+1
+          atmp = atmp/divisor
+          arr(i) = divisor
+        end do
+        divisor = divisor+2
+      end do
+!
+      aout = 1
+      if (i > 1) then
+        do j = 1, i-1
+          aout(1) = aout(1)*arr(j)
+        end do
+        aout(2) = arr(i)
+      else
+        aout(1) = i
+        aout(2) = 1
+      end if
+!
+      end function auto_tile 
 !
       end module mod_shared

@@ -1,21 +1,8 @@
-!-----------------------------------------------------------------------
-!
-!     This file is part of ICTP RegESM.
-!
-!     ICTP RegESM is free software: you can redistribute it and/or modify
-!     it under the terms of the GNU General Public License as published by
-!     the Free Software Foundation, either version 3 of the License, or
-!     (at your option) any later version.
-!
-!     ICTP RegESM is distributed in the hope that it will be useful,
-!     but WITHOUT ANY WARRANTY; without even the implied warranty of
-!     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-!     GNU General Public License for more details.
-!
-!     You should have received a copy of the GNU General Public License
-!     along with ICTP RegESM.  If not, see <http://www.gnu.org/licenses/>.
-!
-!-----------------------------------------------------------------------
+!=======================================================================
+! Regional Earth System Model (RegESM)
+! Copyright (c) 2013-2017 Ufuk Turuncoglu
+! Licensed under the MIT License.
+!=======================================================================
 #define FILENAME "mod_esmf_rtm.F90"
 !
 !-----------------------------------------------------------------------
@@ -150,7 +137,7 @@
 !-----------------------------------------------------------------------
 !
       do i = 1, ubound(models(Iriver)%importField, dim=1)
-        call NUOPC_StateAdvertiseField(importState,                     &
+        call NUOPC_Advertise(importState,                               &
              StandardName=trim(models(Iriver)%importField(i)%long_name),&
              name=trim(models(Iriver)%importField(i)%short_name), rc=rc)
         if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,  &
@@ -162,7 +149,7 @@
 !-----------------------------------------------------------------------
 !
       do i = 1, ubound(models(Iriver)%exportField, dim=1)
-        call NUOPC_StateAdvertiseField(exportState,                     &
+        call NUOPC_Advertise(exportState,                               &
              StandardName=trim(models(Iriver)%exportField(i)%long_name),&
              name=trim(models(Iriver)%exportField(i)%short_name), rc=rc)
         if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,  &
@@ -735,7 +722,7 @@
 !     Add field export state
 !-----------------------------------------------------------------------
 !
-      call NUOPC_StateRealizeField(exportState, field=field, rc=rc) 
+      call NUOPC_Realize(exportState, field=field, rc=rc) 
       if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
                              line=__LINE__, file=FILENAME)) return
       end do
@@ -823,7 +810,7 @@
 !     Add field import state
 !-----------------------------------------------------------------------
 !
-      call NUOPC_StateRealizeField(importState, field=field, rc=rc) 
+      call NUOPC_Realize(importState, field=field, rc=rc) 
       if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
                              line=__LINE__, file=FILENAME)) return
       end do
@@ -1364,7 +1351,7 @@
       ptr = ZERO_R8
 !
 !-----------------------------------------------------------------------
-!     Put data to export field 
+!     Put data to export field (only river discharge)
 !-----------------------------------------------------------------------
 !
       select case (trim(adjustl(itemNameList(i)))) 
@@ -1406,7 +1393,7 @@
 !     on all the Fields in export state 
 !-----------------------------------------------------------------------
 !
-      call NUOPC_StateSetTimestamp(exportState, clock, rc=rc)
+      call NUOPC_UpdateTimestamp(exportState, clock, rc=rc)
       if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
                              line=__LINE__, file=FILENAME)) return
 !

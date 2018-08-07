@@ -1,21 +1,8 @@
-!-----------------------------------------------------------------------
-!
-!     This file is part of ITU RegESM.
-!
-!     ITU RegESM is free software: you can redistribute it and/or modify
-!     it under the terms of the GNU General Public License as published by
-!     the Free Software Foundation, either version 3 of the License, or
-!     (at your option) any later version.
-!
-!     ITU RegESM is distributed in the hope that it will be useful,
-!     but WITHOUT ANY WARRANTY; without even the implied warranty of
-!     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-!     GNU General Public License for more details.
-!
-!     You should have received a copy of the GNU General Public License
-!     along with ITU RegESM.  If not, see <http://www.gnu.org/licenses/>.
-!
-!-----------------------------------------------------------------------
+!=======================================================================
+! Regional Earth System Model (RegESM)
+! Copyright (c) 2013-2017 Ufuk Turuncoglu
+! Licensed under the MIT License.
+!=======================================================================
 #define FILENAME "mod_esmf_cpl.F90"
 !
 !-----------------------------------------------------------------------
@@ -106,7 +93,7 @@
 !     Local variable declarations 
 !-----------------------------------------------------------------------
 !
-      logical :: enableExtp, rh1Exist, rh2Exist
+      logical :: enableExtp, coprocActive, rhExist, rh1Exist, rh2Exist
       integer :: i, j, localPet, petCount, localDECount
       integer :: iSrc, iDst, idSrc, idDst, itSrc, itDst, grSrc, grDst
       integer :: srcCount, dstCount, itemCount, srcTermProcessing
@@ -153,6 +140,15 @@
       end do
 !
       enableExtp = connectors(iSrc,iDst)%modExtrapolation
+!
+!-----------------------------------------------------------------------
+!     Interacting with co-processing component or not? 
+!-----------------------------------------------------------------------
+!
+      coprocActive = .false.
+      if (iDst == Icopro) then
+        coprocActive = .true.
+      end if
 !
 !-----------------------------------------------------------------------
 !     Exchange land-sea mask information 
@@ -297,6 +293,67 @@
          line=__LINE__, file=FILENAME)) return
 !
 !-----------------------------------------------------------------------
+!     If co-processing is active, then create routehandle just for
+!     field redistribution without regridding 
+!-----------------------------------------------------------------------
+!
+      if (coprocActive) then
+!
+!-----------------------------------------------------------------------
+!     Check routehandle (i.e. rh_ATM-COP_redist)
+!-----------------------------------------------------------------------
+!
+      write(rname, fmt="(A,'_',I1,'d_redist')") trim(cname),            &
+            models(iSrc)%exportField(idSrc)%rank
+!
+      call ESMF_StateGet(state, itemSearch='rh_'//trim(rname),          &
+                         itemCount=itemCount, rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+         line=__LINE__, file=FILENAME)) return
+!
+      rhExist = .true.
+      if (itemCount <= 0) rhExist = .false.
+!
+      if (.not. rhExist) then
+!
+!-----------------------------------------------------------------------
+!     Create routehandle
+!-----------------------------------------------------------------------
+!
+      call ESMF_FieldRedistStore(srcField=srcField,                     &
+                                 dstField=dstField,                     &
+                                 routeHandle=routeHandle,               &
+                                 rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+          line=__LINE__, file=FILENAME)) return
+!
+!-----------------------------------------------------------------------
+!     Add name to routehandle    
+!-----------------------------------------------------------------------
+!
+      call ESMF_RouteHandleSet(routeHandle,                             &
+                               name='rh_'//trim(rname), rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+          line=__LINE__, file=FILENAME)) return
+!
+!-----------------------------------------------------------------------
+!     Add 1st routehandle to the state    
+!-----------------------------------------------------------------------
+!
+      call ESMF_StateAdd(state, (/ routeHandle /), rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+          line=__LINE__, file=FILENAME)) return
+!
+      end if
+!
+!-----------------------------------------------------------------------
+!     Interacting with other earth system model components (ATM, OCN), 
+!     co-processing component is not active.
+!-----------------------------------------------------------------------
+!
+      else
+!
+!-----------------------------------------------------------------------
 !     Check for extrapolation option for field?
 !-----------------------------------------------------------------------
 !
@@ -338,6 +395,7 @@
                                  unmappedaction=unmap,                  &
                                  routeHandle=routeHandle,               &
                                  regridmethod=regridMethod,             &
+                                 ignoreDegenerate=.true.,               &
                                  srcTermProcessing=srcTermProcessing,   &
                                  rc=rc)
       if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
@@ -415,6 +473,7 @@
                                  routeHandle=routeHandle,               &
                                  regridmethod=regridMethod,             &
                                  srcTermProcessing=srcTermProcessing,   &
+                                 ignoreDegenerate=.true.,               &
                                  rc=rc)
       if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
           line=__LINE__, file=FILENAME)) return
@@ -490,6 +549,7 @@
                                  routeHandle=routeHandle,               &
                                  regridmethod=regridMethod,             &
                                  srcTermProcessing=srcTermProcessing,   &
+                                 ignoreDegenerate=.true.,               &
                                  rc=rc)
       else
       call ESMF_FieldRegridStore(srcField=srcField,                     &
@@ -498,6 +558,7 @@
                                  routeHandle=routeHandle,               &
                                  regridmethod=regridMethod,             &
                                  srcTermProcessing=srcTermProcessing,   &
+                                 ignoreDegenerate=.true.,               &
                                  rc=rc)
       end if
       if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
@@ -538,7 +599,10 @@
                   rh1Exist, rh2Exist 
       end if
 !
+      end if
+!
       end do
+!
       end if
 !
 !-----------------------------------------------------------------------
@@ -564,7 +628,7 @@
 !     Local variable declarations 
 !-----------------------------------------------------------------------
 !
-      logical :: enableExtp
+      logical :: coprocActive, enableExtp
       real*8 :: src_total, dst_total, rel_error
       integer :: srcValueList(9), dstValueList(9)
       integer :: localPet, petCount, localDECount
@@ -607,6 +671,15 @@
       end do
 !
       enableExtp = connectors(iSrc,iDst)%modExtrapolation
+!
+!-----------------------------------------------------------------------
+!     Interacting with co-processing component or not? 
+!-----------------------------------------------------------------------
+!
+      coprocActive = .false.
+      if (iDst == Icopro) then
+        coprocActive = .true.
+      end if
 !
 !-----------------------------------------------------------------------
 !     Get size of field list
@@ -688,6 +761,44 @@
                                field=dstField, rc=rc)
       if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
           line=__LINE__, file=FILENAME)) return
+!
+!-----------------------------------------------------------------------
+!     If co-processing is active, then create routehandle just for
+!     field redistribution without regridding 
+!-----------------------------------------------------------------------
+!
+      if (coprocActive) then
+!
+!-----------------------------------------------------------------------
+!     Perform redistribute
+!-----------------------------------------------------------------------
+!
+      write(rname, fmt="(A,'_',I1,'d_redist')") trim(cname),            &
+            models(iSrc)%exportField(idSrc)%rank
+!
+      call ESMF_StateGet(state, 'rh_'//trim(rname), routeHandle, rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+         line=__LINE__, file=FILENAME)) return
+!
+      call ESMF_FieldRedist(srcField, dstField, routeHandle, rc=rc)
+      if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,    &
+         line=__LINE__, file=FILENAME)) return
+!
+!
+!-----------------------------------------------------------------------
+!     Debug: print out exchange fields    
+!-----------------------------------------------------------------------
+!
+      if ((debugLevel > 0) .and. (localPet == 0)) then
+      write(*,80) trim(cname),                                          &
+                  trim(models(iSrc)%exportField(idSrc)%short_name),     &
+                  trim(GRIDDES(models(iSrc)%exportField(idSrc)%gtype)), &
+                  trim(models(iDst)%importField(idDst)%short_name),     &
+                  trim(GRIDDES(models(iDst)%importField(idDst)%gtype))
+      end if
+
+!
+      else
 !
 !-----------------------------------------------------------------------
 !     Perform regrid
@@ -888,14 +999,14 @@
       if ((debugLevel > 0) .and. (localPet == 0)) then
         call ESMF_AttributeGet(srcField, name="TimeStamp",              &
                                valueList=srcValueList,                  &
-                               convention="NUOPC", purpose="General",   &
+                               convention="NUOPC", purpose="Instance",  &
                                rc=rc)
         if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,  &
             line=__LINE__, file=FILENAME)) return
 !
         call ESMF_AttributeGet(dstField, name="TimeStamp",              &
                                valueList=dstValueList,                  &
-                               convention="NUOPC", purpose="General",   &
+                               convention="NUOPC", purpose="Instance",  &
                                rc=rc)
         if (ESMF_LogFoundError(rcToCheck=rc, msg=ESMF_LOGERR_PASSTHRU,  &
             line=__LINE__, file=FILENAME)) return
@@ -907,6 +1018,8 @@
                     trim(models(iDst)%importField(idDst)%short_name),   &
                     dstValueList(1), dstValueList(2), dstValueList(3),  &
                     dstValueList(4), dstValueList(5)
+      end if
+!
       end if
 !
       end do
@@ -927,6 +1040,7 @@
              I2.2,'_',I2.2,'_',I2.2,']')
  60   format(A10,': regrid ',A4,' [',A,'] to ',A4,' [',A,']',' >> ',A)
  70   format(" PET(",I3.3,") - ",A," = ",E14.5," (",A,")")
+ 80   format(A10,': redist ',A4,' [',A,'] to ',A4,' [',A,']')
 !
       end subroutine CPL_ExecuteRH
 !
